@@ -21,20 +21,18 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/joho/godotenv"
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 	"github.com/tidwall/sjson"
 	"github.com/urfave/cli/v2"
 
 	"github.com/xeptore/tgtd/config"
-)
-
-var (
-	AppVersion     = "1.0.0"
-	AppCompileTime = ""
+	"github.com/xeptore/tgtd/constant"
+	"github.com/xeptore/tgtd/log"
 )
 
 const (
@@ -42,19 +40,21 @@ const (
 )
 
 func main() {
+	logger := log.NewPretty(os.Stdout).Level(zerolog.TraceLevel)
 	if err := godotenv.Load(); nil != err {
-		log.Fatal().Err(err).Msg("Failed to load .env file")
+		if errors.Is(err, os.ErrNotExist) {
+			logger.Warn().Msg(".env file was not found")
+		} else {
+			logger.Fatal().Err(err).Msg("Failed to load .env file")
+		}
 	}
 
-	compileTime, err := time.Parse(time.RFC3339, AppCompileTime)
-	if nil != err {
-		log.Fatal().Err(err).Msg("") // TODO
-	}
+	logger.Info().Time("compiled_at", constant.CompileTime).Msg("Starting application")
 
 	app := &cli.App{
 		Name:     "tgtd",
-		Version:  AppVersion,
-		Compiled: compileTime,
+		Version:  constant.Version,
+		Compiled: constant.CompileTime,
 		Suggest:  true,
 		Usage:    "Telegram Tidal Uploader",
 		Action:   run,
@@ -67,20 +67,23 @@ func main() {
 			},
 		},
 	}
+
 	if err := app.Run(os.Args); nil != err {
 		if !errors.Is(err, context.Canceled) {
-			log.Fatal().Err(err).Msg("") // TODO
+			logger.Fatal().Err(err).Msg("Application exited with error")
 		}
-		log.Trace().Msg("Application canceled")
+		logger.Trace().Msg("Application canceled")
 	}
 }
 
 func run(cliCtx *cli.Context) (err error) {
+	logger := log.NewPretty(os.Stdout).Level(zerolog.TraceLevel)
 	var (
-		appHash  = os.Getenv("APP_HASH")
-		cfgEnv   = os.Getenv("CONFIG")
-		botToken = os.Getenv("BOT_TOKEN")
-		cfg      *config.Config
+		appHash    = os.Getenv("APP_HASH")
+		cfgEnv     = os.Getenv("CONFIG")
+		botToken   = os.Getenv("BOT_TOKEN")
+		tidalToken = os.Getenv("TIDAL_TOKEN")
+		cfg        *config.Config
 	)
 	cfgFilePath := cliCtx.String(FlagConfigFilePath)
 	switch {
@@ -89,13 +92,15 @@ func run(cliCtx *cli.Context) (err error) {
 	case cfgFilePath == "" && cfgEnv == "":
 		return errors.New("config file path and config environment variable are both empty. specify one")
 	case cfgFilePath != "":
-		c, err := config.FromYML(cfgFilePath)
+		logger.Debug().Str("config_file_path", cfgFilePath).Msg("Loading config from file")
+		c, err := config.FromFile(cfgFilePath)
 		if nil != err {
 			return fmt.Errorf("failed to load config: %v", err)
 		}
 		cfg = c
 	default:
-		c, err := config.FromYMLString(cfgEnv)
+		logger.Debug().Msg("Loading config from environment variable")
+		c, err := config.FromString(cfgEnv)
 		if nil != err {
 			return fmt.Errorf("failed to load config: %v", err)
 		}
@@ -104,7 +109,7 @@ func run(cliCtx *cli.Context) (err error) {
 
 	appID, err := strconv.Atoi(os.Getenv("APP_ID"))
 	if nil != err {
-		log.Fatal().Err(err).Msg("Error converting APP_ID environment variable to int")
+		return errors.New("failed to parse APP_ID environment variable to integer")
 	}
 
 	w := &Worker{
@@ -113,6 +118,8 @@ func run(cliCtx *cli.Context) (err error) {
 		mutex:      sync.Mutex{},
 		currentJob: nil,
 		config:     cfg,
+		tidalToken: tidalToken,
+		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
 	d := tg.NewUpdateDispatcher()
@@ -122,7 +129,6 @@ func run(cliCtx *cli.Context) (err error) {
 	client := telegram.NewClient(
 		appID,
 		appHash,
-		//
 		telegram.Options{
 			SessionStorage: &session.FileStorage{Path: "session.json"},
 			UpdateHandler:  updateHandler,
@@ -137,9 +143,11 @@ func run(cliCtx *cli.Context) (err error) {
 		return fmt.Errorf("failed to connect to telegram: %v", err)
 	}
 	defer func() {
+		logger.Debug().Msg("Stopping bot")
 		if stopErr := stop(); nil != stopErr {
 			err = fmt.Errorf("failed to stop Telegram background connection: %v", stopErr)
 		}
+		logger.Debug().Msg("Bot stopped")
 	}()
 
 	status, err := client.Auth().Status(ctx)
@@ -153,11 +161,12 @@ func run(cliCtx *cli.Context) (err error) {
 	}
 
 	api := tg.NewClient(client)
-
 	w.uploader = uploader.NewUploader(api)
 	w.sender = message.NewSender(api).WithUploader(w.uploader)
 
+	logger.Info().Msg("Bot is running")
 	<-ctx.Done()
+	logger.Debug().Msg("Stopping bot due to received signal")
 	return nil
 }
 
@@ -170,7 +179,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 		msg := m.Message
 		if strings.HasPrefix(msg, "/start") {
 			if _, err := w.sender.Reply(e, update).Text(ctx, "Hello!"); nil != err {
-				log.Error().Err(err).Msg("Failed to send reply")
+				w.logger.Error().Err(err).Msg("Failed to send reply")
 			}
 			return nil
 		}
@@ -178,18 +187,33 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 			link := strings.TrimSpace(strings.TrimPrefix(msg, "/download "))
 			if err := w.run(ctx, m.ID, link); nil != err {
 				if errAlreadyRunning := new(JobAlreadyRunningError); errors.As(err, &errAlreadyRunning) {
-					if _, err := w.sender.Reply(e, update).Text(ctx, "Job is already running.\nCancel with /cancel"); nil != err {
-						log.Error().Err(err).Msg("Failed to send reply")
+					if _, err := w.sender.Reply(e, update).StyledText(ctx, styling.Plain("Another job is still running.\nCancel with "), styling.BotCommand("/cancel")); nil != err {
+						w.logger.Error().Err(err).Msg("Failed to send reply")
+					}
+				} else if errInvalidLink := new(InvalidLinkError); errors.As(err, &errInvalidLink) {
+					if _, err := w.sender.Reply(e, update).StyledText(ctx, styling.Plain("Failed to parse link"), styling.Plain("\n"), styling.Code(errInvalidLink.Error())); nil != err {
+						w.logger.Error().Err(err).Msg("Failed to send reply")
 					}
 				} else {
-					log.Error().Err(err).Msg("Failed to run job")
+					w.logger.Error().Err(err).Msg("Failed to run job")
 				}
+			} else {
+				w.logger.Info().Str("link", link).Msg("Job succeeded")
 			}
 			return nil
 		}
 		if strings.HasPrefix(msg, "/cancel") {
 			if err := w.cancelCurrentJob(); nil != err {
 				if errors.Is(err, os.ErrProcessDone) {
+					if _, err := w.sender.Reply(e, update).StyledText(ctx, styling.Plain("No job was running")); nil != err {
+						w.logger.Error().Err(err).Msg("Failed to send reply")
+					}
+				} else {
+					w.logger.Error().Err(err).Msg("Failed to cancel job")
+				}
+			} else {
+				if _, err := w.sender.Reply(e, update).StyledText(ctx, styling.Plain("Job was canceled")); nil != err {
+					w.logger.Error().Err(err).Msg("Failed to send reply")
 				}
 			}
 		}
@@ -203,6 +227,8 @@ type Worker struct {
 	uploader   *uploader.Uploader
 	sender     *message.Sender
 	currentJob *Job
+	tidalToken string
+	logger     zerolog.Logger
 }
 
 type Job struct {
@@ -210,7 +236,6 @@ type Job struct {
 	CreatedAt time.Time
 	Link      string
 	MessageID int
-	ctx       context.Context
 	cancel    context.CancelFunc
 }
 
@@ -222,35 +247,39 @@ func (e *JobAlreadyRunningError) Error() string {
 	return fmt.Sprintf("engine: job %q is already running", e.ID)
 }
 
+type InvalidLinkError struct {
+	Link string
+	Err  error
+}
+
+func (e *InvalidLinkError) Error() string {
+	return fmt.Sprintf("engine: invalid link %q: %v", e.Link, e.Err)
+}
+
 func parse(link string) (string, string, error) {
 	parsedURL, err := url.Parse(link)
 	if nil != err {
-		return "", "", err // TODO
+		return "", "", &InvalidLinkError{Link: link, Err: fmt.Errorf("engine: failed to parse URL: %v", err)}
 	}
-	parsedURL.RawQuery = ""
-	link = parsedURL.String()
-	after, found := strings.CutPrefix(link, "https://tidal.com/browse/")
+	kind, id, found := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(parsedURL.Path, "/browse/"), "/"), "/")
 	if !found {
-		return "", "", err // TODO
-	}
-	kind, id, found := strings.Cut(after, "/")
-	if !found {
-		return "", "", err // TODO
+		return "", "", &InvalidLinkError{Link: link, Err: errors.New("engine: failed to cut path")}
 	}
 	switch kind {
 	case "playlist", "album", "track", "mix":
 		return id, kind, nil
 	default:
-		return "", "", err // TODO
+		return "", "", &InvalidLinkError{Link: link, Err: fmt.Errorf("engine: unsupported kind %q", kind)}
 	}
 }
 
 func (w *Worker) cancelCurrentJob() error {
 	if !w.mutex.TryLock() {
 		w.currentJob.cancel()
+		return nil
 	}
 	w.mutex.Unlock()
-	return nil
+	return os.ErrProcessDone
 }
 
 func (w *Worker) run(ctx context.Context, msgID int, link string) error {
@@ -264,25 +293,25 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 
 	id, kind, err := parse(link)
 	if nil != err {
-		return fmt.Errorf("engine: failed to parse link: %v", err)
+		return fmt.Errorf("engine: failed to parse link: %w", err)
 	}
 
 	jobCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	w.currentJob = &Job{
 		ID:        kind + "-" + id,
 		CreatedAt: time.Now(),
 		Link:      link,
 		MessageID: msgID,
-		ctx:       jobCtx,
 		cancel:    cancel,
 	}
 
-	dir, err := w.downloadLink(ctx, link)
+	dir, err := w.downloadLink(jobCtx, link)
 	if nil != err {
 		return fmt.Errorf("engine: failed to download link: %v", err)
 	}
-	if err := w.uploadDir(ctx, dir); nil != err {
+	if err := w.uploadDir(jobCtx, dir); nil != err {
 		return fmt.Errorf("engine: failed to upload directory: %v", err)
 	}
 	return nil
@@ -297,8 +326,7 @@ func buildDownloadProcessEnv(dir string) []string {
 			set = true
 			clonedEnv = append(clonedEnv, "XDG_CONFIG_HOME="+dir)
 		} else if strings.HasPrefix(env, "HOME=") {
-			set = true
-			clonedEnv = append(clonedEnv, "HOME="+dir)
+			continue
 		} else {
 			clonedEnv = append(clonedEnv, env)
 		}
@@ -312,13 +340,15 @@ func buildDownloadProcessEnv(dir string) []string {
 //go:embed tidal-config.json
 var tidalConfigJSON []byte
 
-func createTidalDLConfig(downloadDir string) error {
-	copied, err := sjson.SetBytes(tidalConfigJSON, "download_dir", downloadDir)
-	if nil != err {
-		return fmt.Errorf("engine: failed to set JSON data: %v", err)
+func createTidalDLConfig(token, downloadDir string) error {
+	if err := os.WriteFile(path.Join(downloadDir, ".tidal-dl.token.json"), []byte(token), 0o644); nil != err {
+		return fmt.Errorf("engine: failed to write file: %v", err)
 	}
-	newConfigFilePath := path.Join(downloadDir, ".config", "tidal-dl")
-	if err := os.WriteFile(path.Join(newConfigFilePath, "config.json"), copied, 0o644); nil != err {
+	cloned, err := sjson.SetBytes(tidalConfigJSON, "downloadPath", downloadDir)
+	if nil != err {
+		return fmt.Errorf("engine: failed to set download path: %v", err)
+	}
+	if err := os.WriteFile(path.Join(downloadDir, ".tidal-dl.json"), cloned, 0o644); nil != err {
 		return fmt.Errorf("engine: failed to write file: %v", err)
 	}
 	return nil
@@ -330,15 +360,16 @@ func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) 
 		return "", fmt.Errorf("engine: failed to create directory: %v", err)
 	}
 
-	if err := createTidalDLConfig(dir); nil != err {
+	if err := createTidalDLConfig(w.tidalToken, dir); nil != err {
 		return "", fmt.Errorf("engine: failed to clone tidal-dl config: %v", err)
 	}
 
-	cmd := exec.CommandContext(ctx, w.config.TidalDLPath, "-l", link)
+	cmd := exec.CommandContext(ctx, "tidal-dl", "-l", link)
 	cmd.Dir = dir
 	cmd.Env = buildDownloadProcessEnv(dir)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
+	// TODO: review and cleanup function body
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
@@ -361,17 +392,12 @@ func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) 
 	if err := cmd.Run(); nil != err {
 		return "", fmt.Errorf("engine: failed to execute command: %v", err)
 	}
-	cmd.Cancel()
 	return dir, nil
 }
 
 func (w *Worker) uploadDir(ctx context.Context, dir string) error {
-	cover, err := w.uploader.FromPath(ctx, path.Join(dir, "cover.jpg"))
-	if nil != err {
-		return fmt.Errorf("engine: failed to upload cover: %v", err)
-	}
-
-	files, err := os.ReadDir(dir)
+	dlDir := path.Join(dir, "x")
+	files, err := os.ReadDir(dlDir)
 	if nil != err {
 		return fmt.Errorf("engine: failed to read directory: %v", err)
 	}
@@ -380,32 +406,56 @@ func (w *Worker) uploadDir(ctx context.Context, dir string) error {
 		if file.IsDir() {
 			continue
 		}
-		filePath := path.Join(dir, file.Name())
+		filePath := path.Join(dlDir, file.Name())
 		audioFilePaths = append(audioFilePaths, filePath)
 	}
 	if len(audioFilePaths) == 0 {
 		return os.ErrExist
 	}
-	if err := w.uploadAudioFiles(ctx, cover, audioFilePaths); nil != err {
+	if err := w.uploadAudioFiles(ctx, audioFilePaths); nil != err {
 		return fmt.Errorf("engine: failed to upload audio files: %v", err)
 	}
 	return nil
 }
 
-func (w *Worker) uploadAudioFiles(ctx context.Context, cover tg.InputFileClass, filePaths []string) error {
+func (w *Worker) uploadAudioFiles(ctx context.Context, filePaths []string) error {
 	album := make([]message.MultiMediaOption, 0, len(filePaths))
 	for _, filePath := range filePaths {
-		upload, err := w.uploader.FromPath(ctx, filePath)
-		if nil != err {
-			return fmt.Errorf("engine: failed to upload file: %v", err)
-		}
+		fileName := filepath.Base(filePath)
+		nameWithoutExt := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+		coverFileName := path.Join(filepath.Dir(filePath), nameWithoutExt+".jpg")
 
 		cmd := exec.CommandContext(
 			ctx,
-			"ffprobe",
+			"ffmpeg",
+			"-an",
+			"-vcodec",
+			"copy",
+			coverFileName,
 			"-i",
+			filePath,
+		)
+		if err := cmd.Run(); nil != err {
+			return fmt.Errorf("engine: failed to execute command: %v", err)
+		}
+		if cmd.ProcessState.ExitCode() != 0 {
+			return fmt.Errorf("engine: failed to execute command process: %v", cmd.ProcessState.String())
+		}
+
+		coverBytes, err := os.ReadFile(coverFileName)
+		if nil != err {
+			return fmt.Errorf("engine: failed to read cover file: %v", err)
+		}
+		cover, err := w.uploader.FromBytes(ctx, "cover.jpg", coverBytes)
+		if nil != err {
+			return fmt.Errorf("engine: failed to upload cover: %v", err)
+		}
+
+		cmd = exec.CommandContext(
+			ctx,
+			"ffprobe",
 			"-show_entries",
-			"format=duration:format_tags=artist,album:format=format_name",
+			"format=duration:format_tags=artist,title:format=format_name",
 			"-v",
 			"quiet",
 			"-of",
@@ -440,10 +490,12 @@ func (w *Worker) uploadAudioFiles(ctx context.Context, cover tg.InputFileClass, 
 		duration := int(durFloat)
 
 		title := lines[2]
-
 		artist := lines[3]
 
-		fileName := filepath.Base(filePath)
+		upload, err := w.uploader.FromPath(ctx, filePath)
+		if nil != err {
+			return fmt.Errorf("engine: failed to upload file: %v", err)
+		}
 
 		document := message.UploadedDocument(upload)
 		document.

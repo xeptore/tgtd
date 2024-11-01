@@ -3,7 +3,7 @@ version: "3"
 vars:
   GOLANGCI_LINT_VERSION: v1.61.0
   COMP_TIME:
-    sh: printf 'main.AppCompileTime=%s' "$(date -u -Iseconds)"
+    sh: printf 'constant.compileTime=%s' "$(date -u -Iseconds)"
 
 tasks:
   clean:

@@ -15,10 +15,11 @@ RUN task build
 
 FROM python:3.13-alpine
 RUN adduser -D nonroot
+RUN apk add --no-cache ffmpeg
 USER nonroot
 COPY --chown=nonroot:nonroot --from=build /home/dev/src/bin/tgtd /home/nonroot/tgtd
 WORKDIR /home/nonroot
-RUN pip install --no-cache-dir --user tidal-dl
+RUN pip install --upgrade pip && pip install --no-cache-dir --user tidal-dl==2022.10.31.1
 ENV TZ=UTC
 ENV PATH="$PATH:/home/nonroot/.local/bin"
 STOPSIGNAL SIGINT
