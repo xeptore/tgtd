@@ -10,10 +10,10 @@ import (
 )
 
 type Config struct {
-	DownloadBaseDir           string `json:"download_base_dir" yaml:"download_base_dir"`
-	TargetPeerID              string `json:"target_peer_id" yaml:"target_peer_id"`
+	DownloadBaseDir           string `json:"download_base_dir"             yaml:"download_base_dir"`
+	TargetPeerID              string `json:"target_peer_id"                yaml:"target_peer_id"`
 	OriginalTidalDLConfigPath string `json:"original_tidal_dl_config_path" yaml:"original_tidal_dl_config_path"`
-	TidalDLPath               string `json:"tidal_dl_path" yaml:"tidal_dl_path"`
+	TidalDLPath               string `json:"tidal_dl_path"                 yaml:"tidal_dl_path"`
 }
 
 func (cfg *Config) validate() error {
@@ -61,7 +61,7 @@ func FromYML(filePath string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(data), &cfg); nil != err {
+	if err := yaml.Unmarshal(data, &cfg); nil != err {
 		return nil, fmt.Errorf("config: failed to unmarshal config file %q: %v", filePath, err)
 	}
 
@@ -79,7 +79,7 @@ func FromJSON(filePath string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := json.Unmarshal([]byte(data), &cfg); nil != err {
+	if err := json.Unmarshal(data, &cfg); nil != err {
 		return nil, fmt.Errorf("config: failed to unmarshal config file %q: %v", filePath, err)
 	}
 

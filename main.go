@@ -84,17 +84,18 @@ func run(cliCtx *cli.Context) (err error) {
 		cfg      *config.Config
 	)
 	cfgFilePath := cliCtx.String(FlagConfigFilePath)
-	if cfgFilePath != "" && cfgEnv != "" {
+	switch {
+	case cfgFilePath != "" && cfgEnv != "":
 		return errors.New("config file path and config environment variable are both set. specify only one")
-	} else if cfgFilePath == "" && cfgEnv == "" {
+	case cfgFilePath == "" && cfgEnv == "":
 		return errors.New("config file path and config environment variable are both empty. specify one")
-	} else if cfgFilePath != "" {
+	case cfgFilePath != "":
 		c, err := config.FromYML(cfgFilePath)
 		if nil != err {
 			return fmt.Errorf("failed to load config: %v", err)
 		}
 		cfg = c
-	} else {
+	default:
 		c, err := config.FromYMLString(cfgEnv)
 		if nil != err {
 			return fmt.Errorf("failed to load config: %v", err)
@@ -122,6 +123,7 @@ func run(cliCtx *cli.Context) (err error) {
 	client := telegram.NewClient(
 		appID,
 		appHash,
+		//
 		telegram.Options{
 			SessionStorage: &session.FileStorage{Path: "session.json"},
 			UpdateHandler:  updateHandler,
@@ -176,7 +178,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 		if strings.HasPrefix(msg, "/download ") {
 			link := strings.TrimSpace(strings.TrimPrefix(msg, "/download "))
 			if err := w.run(ctx, m.ID, link); nil != err {
-				if errAlreadyRunning := new(JobAlreadyRunning); errors.As(err, &errAlreadyRunning) {
+				if errAlreadyRunning := new(JobAlreadyRunningError); errors.As(err, &errAlreadyRunning) {
 					if _, err := w.sender.Reply(e, update).Text(ctx, "Job is already running.\nCancel with /cancel"); nil != err {
 						log.Error().Err(err).Msg("Failed to send reply")
 					}
@@ -213,11 +215,11 @@ type Job struct {
 	cancel    context.CancelFunc
 }
 
-type JobAlreadyRunning struct {
+type JobAlreadyRunningError struct {
 	ID string
 }
 
-func (e *JobAlreadyRunning) Error() string {
+func (e *JobAlreadyRunningError) Error() string {
 	return fmt.Sprintf("engine: job %q is already running", e.ID)
 }
 
@@ -230,9 +232,11 @@ func parse(link string) (string, string, error) {
 	link = parsedURL.String()
 	after, found := strings.CutPrefix(link, "https://tidal.com/browse/")
 	if !found {
+		return "", "", err // TODO
 	}
 	kind, id, found := strings.Cut(after, "/")
 	if !found {
+		return "", "", err // TODO
 	}
 	switch kind {
 	case "playlist", "album", "track", "mix":
@@ -252,7 +256,7 @@ func (w *Worker) cancelCurrentJob() error {
 
 func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	if !w.mutex.TryLock() {
-		return &JobAlreadyRunning{ID: w.currentJob.ID}
+		return &JobAlreadyRunningError{ID: w.currentJob.ID}
 	}
 	defer func() {
 		w.currentJob = nil
@@ -287,17 +291,17 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 
 func buildDownloadProcessEnv(dir string) []string {
 	parentEnv := os.Environ()
-	clonedEnv := make([]string, len(parentEnv))
+	clonedEnv := make([]string, 0, len(parentEnv))
 	var set bool
-	for i, env := range parentEnv {
+	for _, env := range parentEnv {
 		if strings.HasPrefix(env, "XDG_CONFIG_HOME=") {
 			set = true
-			clonedEnv[i] = "XDG_CONFIG_HOME=" + dir
+			clonedEnv = append(clonedEnv, "XDG_CONFIG_HOME="+dir)
 		} else if strings.HasPrefix(env, "HOME=") {
 			set = true
-			clonedEnv[i] = "HOME=" + dir
+			clonedEnv = append(clonedEnv, "HOME="+dir)
 		} else {
-			clonedEnv[i] = env
+			clonedEnv = append(clonedEnv, env)
 		}
 	}
 	if !set {
@@ -308,7 +312,7 @@ func buildDownloadProcessEnv(dir string) []string {
 
 func cloneTidalDLConfig(originalPath, downloadDir string) error {
 	newConfigFilePath := path.Join(downloadDir, ".config", "tidal-dl-ng")
-	if err := os.MkdirAll(newConfigFilePath, 0755); nil != err {
+	if err := os.MkdirAll(newConfigFilePath, 0o755); nil != err {
 		return fmt.Errorf("engine: failed to create directory: %v", err)
 	}
 	data, err := os.ReadFile(originalPath)
@@ -322,7 +326,7 @@ func cloneTidalDLConfig(originalPath, downloadDir string) error {
 	if nil != err {
 		return fmt.Errorf("engine: failed to set JSON data: %v", err)
 	}
-	if err := os.WriteFile(path.Join(newConfigFilePath, "config.json"), copied, 0644); nil != err {
+	if err := os.WriteFile(path.Join(newConfigFilePath, "config.json"), copied, 0o644); nil != err {
 		return fmt.Errorf("engine: failed to write file: %v", err)
 	}
 	return nil
@@ -330,7 +334,7 @@ func cloneTidalDLConfig(originalPath, downloadDir string) error {
 
 func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) {
 	dir := path.Join(w.config.DownloadBaseDir, w.currentJob.ID)
-	if err := os.MkdirAll(dir, 0755); nil != err {
+	if err := os.MkdirAll(dir, 0o755); nil != err {
 		return "", fmt.Errorf("engine: failed to create directory: %v", err)
 	}
 
@@ -397,7 +401,7 @@ func (w *Worker) uploadDir(ctx context.Context, dir string) error {
 }
 
 func (w *Worker) uploadAudioFiles(ctx context.Context, cover tg.InputFileClass, filePaths []string) error {
-	var album []message.MultiMediaOption
+	album := make([]message.MultiMediaOption, 0, len(filePaths))
 	for _, filePath := range filePaths {
 		upload, err := w.uploader.FromPath(ctx, filePath)
 		if nil != err {
@@ -438,7 +442,9 @@ func (w *Worker) uploadAudioFiles(ctx context.Context, cover tg.InputFileClass, 
 		}
 
 		durFloat, err := strconv.ParseFloat(lines[1], 64)
-		// TODO: handle error
+		if nil != err {
+			return fmt.Errorf("engine: failed to parse duration line: %v", err)
+		}
 		duration := int(durFloat)
 
 		title := lines[2]
