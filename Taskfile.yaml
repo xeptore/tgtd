@@ -1,0 +1,56 @@
+version: "3"
+
+vars:
+  GOLANGCI_LINT_VERSION: v1.61.0
+  COMP_TIME:
+    sh: printf '%s/constant.compileTime=%s' "$(go list -m)" "$(date -u -Iseconds)"
+
+tasks:
+  clean:
+    cmd: go clean -r -cache -testcache -modcache
+
+  tidy:
+    cmd: go mod tidy -v -x
+
+  clear-build-dir:
+    cmds:
+      - cmd: rm -rf ./bin
+      - cmd: mkdir -p ./bin
+
+  build:
+    requires:
+      vars:
+        - COMP_TIME
+    cmds:
+      - task: clear-build-dir:api
+      - cmd: |-
+          go build \
+            -buildvcs=true \
+            -trimpath \
+            -ldflags="-compressdwarf=true -extldflags=-static -s -w -buildid='' -X '{{.COMP_TIME}}'" \
+            -o ./bin/tgtd
+            ./cmd
+
+  lint:
+    internal: true
+    requires:
+      vars:
+        - OUT_FORMAT
+    cmd: |-
+      go run \
+        github.com/golangci/golangci-lint/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} \
+        run \
+        --print-resources-usage \
+        --out-format="{{.OUT_FORMAT}}"
+
+  lint:local:
+    cmds:
+      - task: lint
+        vars:
+          OUT_FORMAT: colored-line-number
+
+  lint:ci:
+    cmds:
+      - task: lint
+        vars:
+          OUT_FORMAT: github-actions
