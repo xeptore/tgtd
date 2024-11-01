@@ -13,10 +13,11 @@ WORKDIR /home/dev/src
 COPY --chown=dev:dev . .
 RUN task build
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM python:3.13.0-alpine
 USER nonroot
 COPY --chown=nonroot:nonroot --from=build /home/dev/src/bin/tgtd /home/nonroot/tgtd
 WORKDIR /home/nonroot
+RUN pip install --no-cache-dir --user tidal-dl-ng
 ENV TZ=UTC
 STOPSIGNAL SIGINT
 ENTRYPOINT [ "/home/nonroot/tgtd" ]
