@@ -22,7 +22,7 @@ tasks:
       vars:
         - COMP_TIME
     cmds:
-      - task: clear-build-dir:api
+      - task: clear-build-dir
       - cmd: |-
           go build \
             -buildvcs=true \
