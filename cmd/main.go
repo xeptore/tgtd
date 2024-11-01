@@ -360,7 +360,7 @@ func createTidalDLConfig(token, downloadDir string) error {
 	if err := os.WriteFile(path.Join(confDir, "settings.json"), cloned, 0o644); nil != err {
 		return fmt.Errorf("engine: failed to write settings.json file: %v", err)
 	}
-	tokenFileData, err := base64.RawStdEncoding.DecodeString(token)
+	tokenFileData, err := base64.StdEncoding.DecodeString(token)
 	if nil != err {
 		return fmt.Errorf("engine: failed to decode token base64: %v", err)
 	}
