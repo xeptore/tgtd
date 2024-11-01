@@ -350,22 +350,22 @@ var tidalConfigJSON []byte
 
 func createTidalDLConfig(token, downloadDir string) error {
 	confDir := path.Join(downloadDir, ".config", "tidal_dl_ng")
-	if err := os.WriteFile(path.Join(confDir, ".tidal-dl.token.json"), []byte(token), 0o644); nil != err {
-		return fmt.Errorf("engine: failed to write file: %v", err)
+	if err := os.MkdirAll(confDir, 0o755); nil != err {
+		return fmt.Errorf("engine: failed to create config directory: %v", err)
 	}
 	cloned, err := sjson.SetBytes(tidalConfigJSON, "download_base_path", downloadDir)
 	if nil != err {
-		return fmt.Errorf("engine: failed to set download path: %v", err)
+		return fmt.Errorf("engine: failed to set download path configuration option: %v", err)
 	}
 	if err := os.WriteFile(path.Join(confDir, "settings.json"), cloned, 0o644); nil != err {
-		return fmt.Errorf("engine: failed to write file: %v", err)
+		return fmt.Errorf("engine: failed to write settings.json file: %v", err)
 	}
 	tokenFileData, err := base64.RawStdEncoding.DecodeString(token)
 	if nil != err {
-		return fmt.Errorf("engine: failed to decode token: %v", err)
+		return fmt.Errorf("engine: failed to decode token base64: %v", err)
 	}
 	if err := os.WriteFile(path.Join(confDir, "token.json"), tokenFileData, 0o644); nil != err {
-		return fmt.Errorf("engine: failed to write token file: %v", err)
+		return fmt.Errorf("engine: failed to write token.json file: %v", err)
 	}
 	return nil
 }
