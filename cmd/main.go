@@ -412,8 +412,14 @@ func (w *Worker) uploadDir(ctx context.Context, dir string) error {
 	if len(audioFilePaths) == 0 {
 		return os.ErrExist
 	}
-	if err := w.uploadAudioFiles(ctx, audioFilePaths); nil != err {
-		return fmt.Errorf("engine: failed to upload audio files: %v", err)
+	for i := 0; i < len(audioFilePaths); i += 10 {
+		j := i + 10
+		if j > len(audioFilePaths) {
+			j = len(audioFilePaths)
+		}
+		if err := w.uploadAudioFiles(ctx, audioFilePaths[i:j]); nil != err {
+			return fmt.Errorf("engine: failed to upload audio files: %v", err)
+		}
 	}
 	return nil
 }
