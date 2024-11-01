@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"net/url"
@@ -25,7 +26,6 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
-	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/urfave/cli/v2"
 
@@ -309,22 +309,15 @@ func buildDownloadProcessEnv(dir string) []string {
 	return clonedEnv
 }
 
-func cloneTidalDLConfig(originalPath, downloadDir string) error {
-	newConfigFilePath := path.Join(downloadDir, ".config", "tidal-dl-ng")
-	if err := os.MkdirAll(newConfigFilePath, 0o755); nil != err {
-		return fmt.Errorf("engine: failed to create directory: %v", err)
-	}
-	data, err := os.ReadFile(originalPath)
-	if nil != err {
-		return fmt.Errorf("engine: failed to read file: %v", err)
-	}
-	if !gjson.ValidBytes(data) {
-		return errors.New("engine: invalid JSON data")
-	}
-	copied, err := sjson.SetBytes(data, "download_dir", downloadDir)
+//go:embed tidal-config.json
+var tidalConfigJSON []byte
+
+func createTidalDLConfig(downloadDir string) error {
+	copied, err := sjson.SetBytes(tidalConfigJSON, "download_dir", downloadDir)
 	if nil != err {
 		return fmt.Errorf("engine: failed to set JSON data: %v", err)
 	}
+	newConfigFilePath := path.Join(downloadDir, ".config", "tidal-dl")
 	if err := os.WriteFile(path.Join(newConfigFilePath, "config.json"), copied, 0o644); nil != err {
 		return fmt.Errorf("engine: failed to write file: %v", err)
 	}
@@ -337,7 +330,7 @@ func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) 
 		return "", fmt.Errorf("engine: failed to create directory: %v", err)
 	}
 
-	if err := cloneTidalDLConfig(w.config.OriginalTidalDLConfigPath, dir); nil != err {
+	if err := createTidalDLConfig(dir); nil != err {
 		return "", fmt.Errorf("engine: failed to clone tidal-dl config: %v", err)
 	}
 

@@ -10,10 +10,9 @@ import (
 )
 
 type Config struct {
-	DownloadBaseDir           string `json:"download_base_dir"             yaml:"download_base_dir"`
-	TargetPeerID              string `json:"target_peer_id"                yaml:"target_peer_id"`
-	OriginalTidalDLConfigPath string `json:"original_tidal_dl_config_path" yaml:"original_tidal_dl_config_path"`
-	TidalDLPath               string `json:"tidal_dl_path"                 yaml:"tidal_dl_path"`
+	DownloadBaseDir string `json:"download_base_dir"             yaml:"download_base_dir"`
+	TargetPeerID    string `json:"target_peer_id"                yaml:"target_peer_id"`
+	TidalDLPath     string `json:"tidal_dl_path"                 yaml:"tidal_dl_path"`
 }
 
 func (cfg *Config) validate() error {
@@ -26,16 +25,6 @@ func (cfg *Config) validate() error {
 		return fmt.Errorf("config: download base dir %q does not exist: %v", cfg.DownloadBaseDir, err)
 	}
 
-	if cfg.OriginalTidalDLConfigPath == "" {
-		return errors.New("config: original tidal-dl config path is empty")
-	}
-	if s, err := os.Stat(cfg.OriginalTidalDLConfigPath); nil != err {
-		// TODO: improve error handling
-		return fmt.Errorf("config: original tidal-dl config path dir %q does not exist: %v", cfg.OriginalTidalDLConfigPath, err)
-	} else if !s.Mode().IsRegular() {
-		return fmt.Errorf("config: original tidal-dl config path %q is not a regular file", cfg.OriginalTidalDLConfigPath)
-	}
-
 	if cfg.TidalDLPath != "" {
 		if s, err := os.Stat(cfg.TidalDLPath); nil != err {
 			// TODO: improve error handling
@@ -44,7 +33,7 @@ func (cfg *Config) validate() error {
 			return fmt.Errorf("config: tidal-dl binary path %q is not a regular file", cfg.TidalDLPath)
 		}
 	} else {
-		cfg.TidalDLPath = "tidal-dl-ng"
+		cfg.TidalDLPath = "tidal-dl"
 	}
 
 	if cfg.TargetPeerID == "" {
