@@ -33,8 +33,7 @@ import (
 )
 
 var (
-	AppName        = ""
-	AppVersion     = ""
+	AppVersion     = "1.0.0"
 	AppCompileTime = ""
 )
 
@@ -49,11 +48,11 @@ func main() {
 
 	compileTime, err := time.Parse(time.RFC3339, AppCompileTime)
 	if nil != err {
-		log.Fatal().Err(err).Msg("")
+		log.Fatal().Err(err).Msg("") // TODO
 	}
 
 	app := &cli.App{
-		Name:     AppName,
+		Name:     "tgtd",
 		Version:  AppVersion,
 		Compiled: compileTime,
 		Suggest:  true,
