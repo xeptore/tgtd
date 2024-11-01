@@ -9,8 +9,9 @@ import (
 )
 
 type Config struct {
-	DownloadBaseDir string `json:"download_base_dir"             yaml:"download_base_dir"`
-	TargetPeerID    string `json:"target_peer_id"                yaml:"target_peer_id"`
+	DownloadBaseDir string  `json:"download_base_dir"             yaml:"download_base_dir"`
+	TargetPeerID    string  `json:"target_peer_id"                yaml:"target_peer_id"`
+	FromIDs         []int64 `json:"from_ids"                      yaml:"from_ids"`
 }
 
 func (cfg *Config) validate() error {

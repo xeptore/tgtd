@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,6 +178,9 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 		if !ok || m.Out {
 			return nil
 		}
+		if u, ok := m.PeerID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
+			return nil
+		}
 		msg := m.Message
 		if strings.HasPrefix(msg, "/start") {
 			if _, err := w.sender.Reply(e, update).Text(ctx, "Hello!"); nil != err {
@@ -307,13 +312,16 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		cancel:    cancel,
 	}
 
+	w.logger.Info().Str("id", w.currentJob.ID).Str("link", link).Msg("Starting download")
 	dir, err := w.downloadLink(jobCtx, link)
 	if nil != err {
 		return fmt.Errorf("engine: failed to download link: %v", err)
 	}
+	w.logger.Info().Str("id", w.currentJob.ID).Str("link", link).Msg("Download finished. Starting upload")
 	if err := w.uploadDir(jobCtx, dir); nil != err {
 		return fmt.Errorf("engine: failed to upload directory: %v", err)
 	}
+	w.logger.Info().Str("id", w.currentJob.ID).Str("link", link).Msg("Upload finished")
 	return nil
 }
 
@@ -341,15 +349,23 @@ func buildDownloadProcessEnv(dir string) []string {
 var tidalConfigJSON []byte
 
 func createTidalDLConfig(token, downloadDir string) error {
-	if err := os.WriteFile(path.Join(downloadDir, ".tidal-dl.token.json"), []byte(token), 0o644); nil != err {
+	confDir := path.Join(downloadDir, ".config", "tidal_dl_ng")
+	if err := os.WriteFile(path.Join(confDir, ".tidal-dl.token.json"), []byte(token), 0o644); nil != err {
 		return fmt.Errorf("engine: failed to write file: %v", err)
 	}
-	cloned, err := sjson.SetBytes(tidalConfigJSON, "downloadPath", downloadDir)
+	cloned, err := sjson.SetBytes(tidalConfigJSON, "download_base_path", downloadDir)
 	if nil != err {
 		return fmt.Errorf("engine: failed to set download path: %v", err)
 	}
-	if err := os.WriteFile(path.Join(downloadDir, ".tidal-dl.json"), cloned, 0o644); nil != err {
+	if err := os.WriteFile(path.Join(confDir, "settings.json"), cloned, 0o644); nil != err {
 		return fmt.Errorf("engine: failed to write file: %v", err)
+	}
+	tokenFileData, err := base64.RawStdEncoding.DecodeString(token)
+	if nil != err {
+		return fmt.Errorf("engine: failed to decode token: %v", err)
+	}
+	if err := os.WriteFile(path.Join(confDir, "token.json"), tokenFileData, 0o644); nil != err {
+		return fmt.Errorf("engine: failed to write token file: %v", err)
 	}
 	return nil
 }
@@ -364,7 +380,7 @@ func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) 
 		return "", fmt.Errorf("engine: failed to clone tidal-dl config: %v", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "tidal-dl", "-l", link)
+	cmd := exec.CommandContext(ctx, "tidal-dl-ng", "dl", link)
 	cmd.Dir = dir
 	cmd.Env = buildDownloadProcessEnv(dir)
 	cmd.Stderr = os.Stderr
@@ -396,8 +412,7 @@ func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) 
 }
 
 func (w *Worker) uploadDir(ctx context.Context, dir string) error {
-	dlDir := path.Join(dir, "x")
-	files, err := os.ReadDir(dlDir)
+	files, err := os.ReadDir(dir)
 	if nil != err {
 		return fmt.Errorf("engine: failed to read directory: %v", err)
 	}
@@ -406,7 +421,7 @@ func (w *Worker) uploadDir(ctx context.Context, dir string) error {
 		if file.IsDir() {
 			continue
 		}
-		filePath := path.Join(dlDir, file.Name())
+		filePath := path.Join(dir, file.Name())
 		audioFilePaths = append(audioFilePaths, filePath)
 	}
 	if len(audioFilePaths) == 0 {
