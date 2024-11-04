@@ -13,7 +13,7 @@ WORKDIR /home/dev/src
 COPY --chown=dev:dev . .
 RUN task build
 
-FROM python:3.11-alpine
+FROM python:3.13-alpine
 RUN adduser -D nonroot
 RUN apk add --no-cache ffmpeg
 USER nonroot
