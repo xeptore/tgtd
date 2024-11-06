@@ -19,10 +19,10 @@ import (
 	"github.com/tidwall/gjson"
 	"gopkg.in/yaml.v3"
 
-	"github.com/falomen-app/backend/config"
-	"github.com/falomen-app/backend/constant"
-	"github.com/falomen-app/backend/env"
-	"github.com/falomen-app/backend/must"
+	"github.com/xeptore/tgtd/config"
+	"github.com/xeptore/tgtd/constant"
+	// "github.com/xeptore/tgtd/env"
+	// "github.com/xeptore/tgtd/must"
 )
 
 const (
@@ -119,7 +119,6 @@ func (b *Bot) sendInitialMessage() {
 		"message":     "Bot was just started.",
 		"version":     constant.Version,
 		"compiled_at": constant.CompileTime.Format(time.RFC3339),
-		"revision":    constant.Revision,
 	}
 	yamlEncoded, err := yaml.Marshal(data)
 	if nil != err {

@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	_ "embed"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -19,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/gotd/contrib/bg"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
@@ -29,12 +28,17 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
-	"github.com/tidwall/sjson"
 	"github.com/urfave/cli/v2"
+	"github.com/xeptore/flaw/v8"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/constant"
 	"github.com/xeptore/tgtd/log"
+	"github.com/xeptore/tgtd/sliceutil"
+	"github.com/xeptore/tgtd/tidl"
+	"github.com/xeptore/tgtd/tidl/auth"
+	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const (
@@ -115,11 +119,12 @@ func run(cliCtx *cli.Context) (err error) {
 	}
 
 	w := &Worker{
+		mutex:      sync.Mutex{},
+		config:     cfg,
 		uploader:   nil,
 		sender:     nil,
-		mutex:      sync.Mutex{},
+		tidlAuth:   nil,
 		currentJob: nil,
-		config:     cfg,
 		tidalToken: tidalToken,
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
@@ -165,6 +170,50 @@ func run(cliCtx *cli.Context) (err error) {
 	api := tg.NewClient(client)
 	w.uploader = uploader.NewUploader(api)
 	w.sender = message.NewSender(api).WithUploader(w.uploader)
+
+	tidlAuth, err := auth.Load(ctx)
+	if nil != err {
+		if !errors.Is(err, auth.ErrUnauthorized) {
+			return fmt.Errorf("failed to initialize auth service instance: %v", err)
+		}
+		link, wait, err := auth.NewAuthorizer(ctx)
+		if nil != err {
+			return fmt.Errorf("failed to initialize authorizer: %v", err)
+		}
+		_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
+			ctx,
+			styling.Plain("Please visit the following link to authorize the application:"),
+			styling.Plain("\n"),
+			styling.URL(link),
+		)
+		if nil != err {
+			return fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err)
+		}
+		res := <-wait
+		if err := res.Err; nil != err {
+			_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
+				ctx,
+				styling.Plain("TIDAL authentication failed:"),
+				styling.Plain("\n"),
+				styling.Code(err.Error()),
+			)
+			if nil != err {
+				return fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err)
+			}
+		}
+		_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
+			ctx,
+			styling.Bold("TIDAL authentication was successful!"),
+		)
+		if nil != err {
+			return fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err)
+		}
+		tidlAuth = res.Auth
+	}
+	if err := tidlAuth.VerifyAccessToken(ctx); nil != err {
+		return fmt.Errorf("failed to verify access token %v:", err)
+	}
+	w.tidlAuth = tidlAuth
 
 	logger.Info().Msg("Bot is running")
 	<-ctx.Done()
@@ -231,6 +280,7 @@ type Worker struct {
 	config     *config.Config
 	uploader   *uploader.Uploader
 	sender     *message.Sender
+	tidlAuth   *auth.Auth
 	currentJob *Job
 	tidalToken string
 	logger     zerolog.Logger
@@ -242,6 +292,15 @@ type Job struct {
 	Link      string
 	MessageID int
 	cancel    context.CancelFunc
+}
+
+func (j *Job) flawP() flaw.P {
+	return flaw.P{
+		"id":         j.ID,
+		"created_at": j.CreatedAt,
+		"link":       j.Link,
+		"message_id": j.MessageID,
+	}
 }
 
 type JobAlreadyRunningError struct {
@@ -301,239 +360,150 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		return fmt.Errorf("engine: failed to parse link: %w", err)
 	}
 
+	flawP := flaw.P{"id": id, "kind": kind}
+
 	jobCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	w.currentJob = &Job{
-		ID:        kind + "-" + id,
+	job := Job{
+		ID:        id,
 		CreatedAt: time.Now(),
 		Link:      link,
 		MessageID: msgID,
 		cancel:    cancel,
 	}
+	flawP["job"] = job.flawP()
+	w.currentJob = &job
 
-	w.logger.Info().Str("id", w.currentJob.ID).Str("link", link).Msg("Starting download")
-	dir, err := w.downloadLink(jobCtx, link)
-	if nil != err {
-		return fmt.Errorf("engine: failed to download link: %v", err)
-	}
-	w.logger.Info().Str("id", w.currentJob.ID).Str("link", link).Msg("Download finished. Starting upload")
-	if err := w.uploadDir(jobCtx, dir); nil != err {
-		return fmt.Errorf("engine: failed to upload directory: %v", err)
-	}
-	w.logger.Info().Str("id", w.currentJob.ID).Str("link", link).Msg("Upload finished")
-	return nil
-}
+	const downloadBaseDir = "downloads"
+	downloader := tidl.NewDownloader(w.tidlAuth, downloadBaseDir)
 
-func buildDownloadProcessEnv(dir string) []string {
-	parentEnv := os.Environ()
-	clonedEnv := make([]string, 0, len(parentEnv))
-	var set bool
-	for _, env := range parentEnv {
-		if strings.HasPrefix(env, "XDG_CONFIG_HOME=") {
-			set = true
-			clonedEnv = append(clonedEnv, "XDG_CONFIG_HOME="+dir)
-		} else if strings.HasPrefix(env, "HOME=") {
-			continue
-		} else {
-			clonedEnv = append(clonedEnv, env)
+	switch kind {
+	case "playlist":
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download playlist")
+		if err := downloader.Playlist(jobCtx, id); nil != err {
+			return fmt.Errorf("engine: failed to download playlist link: %v", err)
 		}
-	}
-	if !set {
-		clonedEnv = append(clonedEnv, "XDG_CONFIG_HOME="+dir)
-	}
-	return clonedEnv
-}
-
-//go:embed tidal-config.json
-var tidalConfigJSON []byte
-
-func createTidalDLConfig(token, downloadDir string) error {
-	confDir := path.Join(downloadDir, ".config", "tidal_dl_ng")
-	if err := os.MkdirAll(confDir, 0o755); nil != err {
-		return fmt.Errorf("engine: failed to create config directory: %v", err)
-	}
-	cloned, err := sjson.SetBytes(tidalConfigJSON, "download_base_path", downloadDir)
-	if nil != err {
-		return fmt.Errorf("engine: failed to set download path configuration option: %v", err)
-	}
-	if err := os.WriteFile(path.Join(confDir, "settings.json"), cloned, 0o644); nil != err {
-		return fmt.Errorf("engine: failed to write settings.json file: %v", err)
-	}
-	tokenFileData, err := base64.StdEncoding.DecodeString(token)
-	if nil != err {
-		return fmt.Errorf("engine: failed to decode token base64: %v", err)
-	}
-	if err := os.WriteFile(path.Join(confDir, "token.json"), tokenFileData, 0o644); nil != err {
-		return fmt.Errorf("engine: failed to write token.json file: %v", err)
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting playlist upload")
+		if err := w.uploadPlaylist(jobCtx, downloadBaseDir); nil != err {
+			return fmt.Errorf("engine: failed to upload playlist tracks: %v", err)
+		}
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Playlist upload finished")
+	case "album":
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download album")
+		if err := downloader.Album(jobCtx, id); nil != err {
+			return fmt.Errorf("engine: failed to download album link: %v", err)
+		}
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting album upload")
+		if err := w.uploadAlbum(jobCtx, downloadBaseDir); nil != err {
+			return fmt.Errorf("engine: failed to upload album volume tracks: %v", err)
+		}
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Album upload finished")
+	case "track":
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download track")
+		if err := downloader.Track(jobCtx, id); nil != err {
+			return fmt.Errorf("engine: failed to download track link: %v", err)
+		}
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting track upload")
+		if err := w.uploadSingle(jobCtx, downloadBaseDir); nil != err {
+			return fmt.Errorf("engine: failed to upload directory: %v", err)
+		}
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Album upload finished")
+	case "mix":
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download mix")
+		if err := downloader.Mix(jobCtx, id); nil != err {
+			if errors.Is(err, auth.ErrUnauthorized) {
+				return auth.ErrUnauthorized
+			}
+			return must.BeFlaw(err).Append(flawP)
+		}
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting track upload")
+		if err := w.uploadMix(jobCtx, downloadBaseDir); nil != err {
+			return fmt.Errorf("engine: failed to upload mix tracks: %v", err)
+		}
+	default:
+		panic(fmt.Sprintf("unsupported download link kind: %s", kind))
 	}
 	return nil
 }
 
-func (w *Worker) downloadLink(ctx context.Context, link string) (string, error) {
-	dir := path.Join(w.config.DownloadBaseDir, w.currentJob.ID)
-	if err := os.MkdirAll(dir, 0o755); nil != err {
-		return "", fmt.Errorf("engine: failed to create directory: %v", err)
-	}
-
-	if err := createTidalDLConfig(w.tidalToken, dir); nil != err {
-		return "", fmt.Errorf("engine: failed to clone tidal-dl config: %v", err)
-	}
-
-	cmd := exec.CommandContext(ctx, "tidal-dl-ng", "dl", link)
-	cmd.Dir = dir
-	cmd.Env = buildDownloadProcessEnv(dir)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	// TODO: review and cleanup function body
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		if err := cmd.Process.Signal(syscall.SIGINT); nil != err {
-			return fmt.Errorf("engine: failed to send INT signal to process: %v", err)
-		}
-		time.Sleep(5 * time.Second)
-		// TODO: check whether the job has already terminated, otherwise send KILL signal
-		cmd.ProcessState.ExitCode()
-		cmd.ProcessState.Success()
-		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-		}
-		if err := cmd.Process.Signal(syscall.SIGKILL); nil != err {
-			return fmt.Errorf("engine: failed to send KILL signal to process: %v", err)
-		}
-		time.Sleep(5 * time.Second)
-		return nil
-	}
-	if err := cmd.Run(); nil != err {
-		return "", fmt.Errorf("engine: failed to execute command: %v", err)
-	}
-	return dir, nil
-}
-
-func (w *Worker) uploadDir(ctx context.Context, dir string) error {
-	files, err := os.ReadDir(dir)
+func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
+	albumDir := path.Join(path.Join(baseDir, "albums", w.currentJob.ID))
+	files, err := os.ReadDir(albumDir)
 	if nil != err {
 		return fmt.Errorf("engine: failed to read directory: %v", err)
 	}
-	var audioFilePaths []string
-	for _, file := range files {
-		if file.IsDir() {
+	volumesCount := len(files)
+	for volIdx := range volumesCount {
+		if !files[volIdx].IsDir() {
 			continue
 		}
-		filePath := path.Join(dir, file.Name())
-		audioFilePaths = append(audioFilePaths, filePath)
-	}
-	if len(audioFilePaths) == 0 {
-		return os.ErrExist
-	}
-	for i := 0; i < len(audioFilePaths); i += 10 {
-		j := i + 10
-		if j > len(audioFilePaths) {
-			j = len(audioFilePaths)
+		volDirPath := path.Join(albumDir, strconv.Itoa(volIdx+1))
+		tracks, err := w.readVolumeInfo(ctx, volDirPath)
+		if nil != err {
+			return fmt.Errorf("engine: failed to read volume info: %v", err)
 		}
-		if err := w.uploadAudioFiles(ctx, audioFilePaths[i:j]); nil != err {
+		if err := w.uploadVolumeTracks(ctx, baseDir, tracks); nil != err {
+			return fmt.Errorf("engine: failed to upload volume tracks: %v", err)
+		}
+	}
+	return nil
+}
+
+func (w *Worker) readVolumeInfo(ctx context.Context, dirPath string) (tracks []tidl.AlbumTrack, err error) {
+	f, err := os.OpenFile(path.Join(dirPath, "volume.json"), os.O_RDONLY, 0o644)
+	if nil != err {
+		return nil, fmt.Errorf("engine: failed to open volume file: %v", err)
+	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			err = fmt.Errorf("engine: failed to close volume file: %v", closeErr)
+		}
+	}()
+	if err := json.NewDecoder(f).DecodeContext(ctx, &tracks); nil != err {
+		return nil, fmt.Errorf("engine: failed to unmarshal volume file: %v", err)
+	}
+	return tracks, nil
+}
+
+func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, tracks []tidl.AlbumTrack) error {
+	batches := slices.Chunk(tracks, 10)
+	for batch := range batches {
+		fileNames := sliceutil.Map(batch, func(track tidl.AlbumTrack) string { return track.FileName() })
+		if err := w.uploadTracksBatch(ctx, baseDir, fileNames); nil != err {
 			return fmt.Errorf("engine: failed to upload audio files: %v", err)
 		}
 	}
 	return nil
 }
 
-func (w *Worker) uploadAudioFiles(ctx context.Context, filePaths []string) error {
-	album := make([]message.MultiMediaOption, 0, len(filePaths))
-	for _, filePath := range filePaths {
-		fileName := filepath.Base(filePath)
-		nameWithoutExt := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		coverFileName := path.Join(filepath.Dir(filePath), nameWithoutExt+".jpg")
+func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string) error {
+	album := make([]message.MultiMediaOption, len(fileNames))
+	wg, wgCtx := errgroup.WithContext(ctx)
+	wg.SetLimit(-1)
+	loopFlawPs := make([]flaw.P, len(fileNames))
+	flawP := flaw.P{"loop_payloads": loopFlawPs}
+	for i, trackFileName := range fileNames {
+		wg.Go(func() error {
+			fileName := path.Join(baseDir, trackFileName)
+			loopFlawP := flaw.P{"file_name": fileName}
+			loopFlawPs[i] = loopFlawP
+			info, err := tidl.ReadTrackInfoFile(wgCtx, fileName)
+			if nil != err {
+				return must.BeFlaw(err).Append(flawP)
+			}
+			loopFlawP["info"] = info.FlawP()
+			document, err := w.uploadTrack(wgCtx, fileName, *info)
+			if nil != err {
+				return must.BeFlaw(err).Append(flawP)
+			}
+			album[i] = document
+			return nil
+		})
+	}
 
-		cmd := exec.CommandContext(
-			ctx,
-			"ffmpeg",
-			"-an",
-			"-vcodec",
-			"copy",
-			coverFileName,
-			"-i",
-			filePath,
-		)
-		if err := cmd.Run(); nil != err {
-			return fmt.Errorf("engine: failed to execute command: %v", err)
-		}
-		if cmd.ProcessState.ExitCode() != 0 {
-			return fmt.Errorf("engine: failed to execute command process: %v", cmd.ProcessState.String())
-		}
-
-		coverBytes, err := os.ReadFile(coverFileName)
-		if nil != err {
-			return fmt.Errorf("engine: failed to read cover file: %v", err)
-		}
-		cover, err := w.uploader.FromBytes(ctx, "cover.jpg", coverBytes)
-		if nil != err {
-			return fmt.Errorf("engine: failed to upload cover: %v", err)
-		}
-
-		cmd = exec.CommandContext(
-			ctx,
-			"ffprobe",
-			"-show_entries",
-			"format=duration:format_tags=artist,title:format=format_name",
-			"-v",
-			"quiet",
-			"-of",
-			"default=noprint_wrappers=1:nokey=1",
-			"-i",
-			filePath,
-		)
-		output, err := cmd.Output()
-		if nil != err {
-			return fmt.Errorf("engine: failed to execute command: %v", err)
-		}
-		if cmd.ProcessState.ExitCode() != 0 {
-			return fmt.Errorf("engine: failed to execute command: %v", string(output))
-		}
-		lines := strings.SplitN(strings.TrimSpace(string(output)), "\n", 4)
-		if len(lines) != 4 {
-			return errors.New("engine: unexpected ffmpeg output format")
-		}
-
-		var mime string
-		switch format := lines[0]; format {
-		case "flac":
-			mime = "audio/flac"
-		default:
-			return fmt.Errorf("engine: unsupported audio format: %q", format)
-		}
-
-		durFloat, err := strconv.ParseFloat(lines[1], 64)
-		if nil != err {
-			return fmt.Errorf("engine: failed to parse duration line: %v", err)
-		}
-		duration := int(durFloat)
-
-		title := lines[2]
-		artist := lines[3]
-
-		upload, err := w.uploader.FromPath(ctx, filePath)
-		if nil != err {
-			return fmt.Errorf("engine: failed to upload file: %v", err)
-		}
-
-		document := message.UploadedDocument(upload)
-		document.
-			MIME(mime).
-			Attributes(
-				&tg.DocumentAttributeFilename{
-					FileName: fileName,
-				},
-				&tg.DocumentAttributeAudio{
-					Title:     title,
-					Performer: artist,
-					Duration:  duration,
-				},
-			).
-			Thumb(cover).
-			Audio()
-		album = append(album, document)
+	if err := wg.Wait(); nil != err {
+		return must.BeFlaw(err).Append(flawP)
 	}
 
 	var rest []message.MultiMediaOption
@@ -542,8 +512,131 @@ func (w *Worker) uploadAudioFiles(ctx context.Context, filePaths []string) error
 	}
 
 	target := w.config.TargetPeerID
-	if _, err := w.sender.Resolve(target).Album(ctx, album[0], rest...); nil != err {
+	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Reply(w.currentJob.MessageID).Album(ctx, album[0], rest...); nil != err {
+		return flaw.From(fmt.Errorf("engine: failed to send media album to specified target %q: %v", target, err)).Append(flawP)
+	}
+	return nil
+}
+
+func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
+	playlistDir := path.Join(path.Join(baseDir, "playlists", w.currentJob.ID))
+	tracks, err := readTracksDirInfo[tidl.PlaylistTrack](ctx, playlistDir)
+	if nil != err {
+		return fmt.Errorf("engine: failed to read playlist info: %v", err)
+	}
+
+	batches := slices.Chunk(tracks, 10)
+	for batch := range batches {
+		fileNames := sliceutil.Map(batch, func(track tidl.PlaylistTrack) string { return track.FileName() })
+		if err := w.uploadTracksBatch(ctx, baseDir, fileNames); nil != err {
+			return fmt.Errorf("engine: failed to upload playlist batch files: %v", err)
+		}
+	}
+	return nil
+}
+
+func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
+	mixDir := path.Join(path.Join(baseDir, "mixes", w.currentJob.ID))
+	flawP := flaw.P{"mix_dir": mixDir}
+	tracks, err := readTracksDirInfo[tidl.MixTrack](ctx, mixDir)
+	if nil != err {
+		return must.BeFlaw(err).Append(flawP)
+	}
+
+	batches := slices.Chunk(tracks, 10)
+	var loopFlawPs []flaw.P
+	flawP["loop_payloads"] = loopFlawPs
+	for batch := range batches {
+		fileNames := sliceutil.Map(batch, func(track tidl.MixTrack) string { return track.FileName() })
+		loopFlawP := flaw.P{"file_names": fileNames}
+		loopFlawPs = append(loopFlawPs, loopFlawP)
+		if err := w.uploadTracksBatch(ctx, baseDir, fileNames); nil != err {
+			return must.BeFlaw(err).Append(flawP)
+		}
+	}
+	return nil
+}
+
+func readTracksDirInfo[T any](ctx context.Context, dirPath string) (tracks []T, err error) {
+	f, err := os.OpenFile(path.Join(dirPath, "info.json"), os.O_RDONLY, 0o644)
+	if nil != err {
+		return nil, flaw.From(fmt.Errorf("failed to open dir info file: %v", err))
+	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr))
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+	if err := json.NewDecoder(f).DecodeContext(ctx, &tracks); nil != err {
+		return nil, flaw.From(fmt.Errorf("failed to unmarshal dir info file: %v", err))
+	}
+	return tracks, nil
+}
+
+func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
+	trackDir := path.Join(path.Join(basePath, "singles", w.currentJob.ID))
+	entries, err := os.ReadDir(trackDir)
+	if nil != err {
+		return fmt.Errorf("engine: failed to read directory: %v", err)
+	}
+	var document *message.UploadedDocumentBuilder
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		fileName := path.Join(trackDir, strings.TrimSuffix(entry.Name(), ".json"))
+		track, err := tidl.ReadTrackInfoFile(ctx, fileName)
+		if nil != err {
+			return fmt.Errorf("engine: failed to read track info: %v", err)
+		}
+		doc, err := w.uploadTrack(ctx, fileName, *track)
+		if nil != err {
+			return fmt.Errorf("engine: failed to upload track: %v", err)
+		}
+		document = doc
+		break
+	}
+	target := w.config.TargetPeerID
+	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Media(ctx, document); nil != err {
 		return fmt.Errorf("engine: failed to send media to specified target %q: %v", target, err)
 	}
 	return nil
+}
+
+func (w *Worker) uploadTrack(ctx context.Context, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
+	coverBytes, err := os.ReadFile(fileName + ".jpg")
+	if nil != err {
+		return nil, flaw.From(fmt.Errorf("engine: failed to read track cover file: %v", err))
+	}
+	cover, err := w.uploader.FromBytes(ctx, "cover.jpg", coverBytes)
+	if nil != err {
+		return nil, flaw.From(fmt.Errorf("engine: failed to upload track cover: %v", err))
+	}
+
+	upload, err := w.uploader.FromPath(ctx, fileName)
+	if nil != err {
+		return nil, flaw.From(fmt.Errorf("engine: failed to upload track file: %v", err))
+	}
+
+	document := message.UploadedDocument(upload)
+	document.
+		MIME("audio/flac").
+		Attributes(
+			&tg.DocumentAttributeFilename{
+				FileName: filepath.Base(fileName),
+			},
+			&tg.DocumentAttributeAudio{
+				Title:     info.Title,
+				Performer: info.ArtistName,
+				Duration:  info.Duration,
+			},
+		).
+		Thumb(cover).
+		Audio()
+	return document, nil
 }
