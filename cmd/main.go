@@ -85,11 +85,10 @@ func main() {
 func run(cliCtx *cli.Context) (err error) {
 	logger := log.NewPretty(os.Stdout).Level(zerolog.TraceLevel)
 	var (
-		appHash    = os.Getenv("APP_HASH")
-		cfgEnv     = os.Getenv("CONFIG")
-		botToken   = os.Getenv("BOT_TOKEN")
-		tidalToken = os.Getenv("TIDAL_TOKEN")
-		cfg        *config.Config
+		appHash  = os.Getenv("APP_HASH")
+		cfgEnv   = os.Getenv("CONFIG")
+		botToken = os.Getenv("BOT_TOKEN")
+		cfg      *config.Config
 	)
 	cfgFilePath := cliCtx.String(FlagConfigFilePath)
 	switch {
@@ -125,7 +124,6 @@ func run(cliCtx *cli.Context) (err error) {
 		sender:     nil,
 		tidlAuth:   nil,
 		currentJob: nil,
-		tidalToken: tidalToken,
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
@@ -282,7 +280,6 @@ type Worker struct {
 	sender     *message.Sender
 	tidlAuth   *auth.Auth
 	currentJob *Job
-	tidalToken string
 	logger     zerolog.Logger
 }
 
