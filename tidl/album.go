@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidl/must"
 )
 
@@ -28,7 +29,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	}
 
 	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(albumDownloadConcurrency)
+	wg.SetLimit(ratelimit.AlbumDownloadConcurrency)
 
 	for i := range volumes {
 		volNum := i + 1

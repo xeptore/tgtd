@@ -1,0 +1,16 @@
+package ratelimit_test
+
+import (
+	"testing"
+
+	"github.com/xeptore/tgtd/ratelimit"
+)
+
+func Test_TrackDownloadSleepMS(t *testing.T) {
+	for range 100 {
+		ms := ratelimit.TrackDownloadSleepMS().Milliseconds()
+		if ms < 2000 || ms > 6000 {
+			t.Errorf("expected 2000 <= ms <= 6000, got %d", ms)
+		}
+	}
+}

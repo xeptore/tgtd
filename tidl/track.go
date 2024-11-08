@@ -34,7 +34,7 @@ func (t *TrackInfo) FlawP() flaw.P {
 		"duration":    t.Duration,
 		"title":       t.Title,
 		"artist_name": t.ArtistName,
-		"version":     ptr.ValueOr(t.Version, "<nil>"),
+		"version":     ptr.ValueOr(t.Version, ""),
 	}
 }
 

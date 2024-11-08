@@ -15,6 +15,7 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/ptr"
+	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidl/auth"
 	"github.com/xeptore/tgtd/tidl/must"
 )
@@ -30,7 +31,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 	}
 
 	wg, ctx := errgroup.WithContext(ctx)
-	wg.SetLimit(playlistDownloadConcurrency)
+	wg.SetLimit(ratelimit.PlaylistDownloadConcurrency)
 
 	if err := d.preparePlaylistDir(id, tracks); nil != err {
 		return err
@@ -138,7 +139,7 @@ func (r *PlaylistResponse) FlawP() flaw.P {
 				"duration":      v.Item.Duration,
 				"artist":        flaw.P{"name": v.Item.Artist.Name},
 				"album":         flaw.P{"cover": v.Item.Album.Cover},
-				"version":       ptr.ValueOr(v.Item.Version, "<nil>"),
+				"version":       ptr.ValueOr(v.Item.Version, ""),
 			},
 		})
 	}
@@ -178,7 +179,7 @@ func (i *PlaylistItem) FlawP() flaw.P {
 		"duration":      i.Duration,
 		"artist":        flaw.P{"name": i.Artist.Name},
 		"album":         flaw.P{"cover": i.Album.Cover},
-		"version":       ptr.ValueOr(i.Version, "<nil>"),
+		"version":       ptr.ValueOr(i.Version, ""),
 	}
 }
 

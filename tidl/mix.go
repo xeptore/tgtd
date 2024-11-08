@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidl/auth"
 	"github.com/xeptore/tgtd/tidl/must"
 )
@@ -32,7 +33,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 	}
 
 	wg, ctx := errgroup.WithContext(ctx)
-	wg.SetLimit(mixDownloadConcurrency)
+	wg.SetLimit(ratelimit.MixDownloadConcurrency)
 	for _, track := range tracks {
 		wg.Go(func() error { return d.download(ctx, &track) })
 	}

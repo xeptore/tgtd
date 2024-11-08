@@ -13,36 +13,35 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/rs/zerolog"
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidl/auth"
 	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const (
-	trackAPIFormat                    = "https://api.tidalhifi.com/v1/tracks/%s"
-	trackStreamAPIFormat              = "https://api.tidalhifi.com/v1/tracks/%s/playbackinfopostpaywall"
-	albumItemsAPIFormat               = "https://api.tidalhifi.com/v1/albums/%s/items"
-	playlistItemsAPIFormat            = "https://api.tidalhifi.com/v1/playlists/%s/items"
-	mixItemsAPIFormat                 = "https://api.tidalhifi.com/v1/mixes/%s/items"
-	coverURLFormat                    = "https://resources.tidal.com/images/%s/1280x1280.jpg"
-	pageSize                          = 100
-	maxBatchParts                     = 10
-	maxMultipartConcurrentConnections = 5
-	singlePartChunkSize               = 1024 * 1024
-	albumDownloadConcurrency          = 5
-	playlistDownloadConcurrency       = 5
-	mixDownloadConcurrency            = 5
+	trackAPIFormat         = "https://api.tidalhifi.com/v1/tracks/%s"
+	trackStreamAPIFormat   = "https://api.tidalhifi.com/v1/tracks/%s/playbackinfopostpaywall"
+	albumItemsAPIFormat    = "https://api.tidalhifi.com/v1/albums/%s/items"
+	playlistItemsAPIFormat = "https://api.tidalhifi.com/v1/playlists/%s/items"
+	mixItemsAPIFormat      = "https://api.tidalhifi.com/v1/mixes/%s/items"
+	coverURLFormat         = "https://resources.tidal.com/images/%s/1280x1280.jpg"
+	pageSize               = 100
+	maxBatchParts          = 10
+	singlePartChunkSize    = 1024 * 1024
 )
 
 type Downloader struct {
 	auth     *auth.Auth
 	basePath string
+	logger   zerolog.Logger
 }
 
-func NewDownloader(auth *auth.Auth, basePath string) *Downloader {
-	return &Downloader{auth: auth, basePath: basePath}
+func NewDownloader(auth *auth.Auth, basePath string, logger zerolog.Logger) *Downloader {
+	return &Downloader{auth: auth, basePath: basePath, logger: logger}
 }
 
 func (d *Downloader) download(ctx context.Context, t Track) error {
@@ -61,6 +60,12 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 
 	fileName := path.Join(d.basePath, t.FileName())
 	flawP := flaw.P{"file_name": fileName}
+
+	waitTime := ratelimit.TrackDownloadSleepMS()
+	flawP["wait_time"] = waitTime
+	d.logger.Debug().Dur("wait_time", waitTime).Msg("Waiting to prevent rate limit error before starting track download")
+	time.Sleep(waitTime)
+
 	if err := stream.saveTo(ctx, fileName); nil != err {
 		if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
 			return err

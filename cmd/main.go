@@ -680,7 +680,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	w.currentJob = &job
 
 	const downloadBaseDir = "downloads"
-	downloader := tidl.NewDownloader(w.tidlAuth, downloadBaseDir)
+	downloader := tidl.NewDownloader(w.tidlAuth, downloadBaseDir, w.logger.With().Logger())
 
 	switch kind {
 	case "playlist":
