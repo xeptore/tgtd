@@ -1,8 +1,9 @@
 module github.com/xeptore/tgtd
 
-go 1.23.2
+go 1.23.3
 
 require (
+	github.com/BurntSushi/toml v1.4.0
 	github.com/goccy/go-json v0.10.3
 	github.com/gotd/contrib v0.20.0
 	github.com/gotd/td v0.111.2
@@ -13,7 +14,7 @@ require (
 	github.com/urfave/cli/v2 v2.27.5
 	github.com/xeptore/flaw/v8 v8.2.1
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
-	golang.org/x/sync v0.8.0
+	golang.org/x/sync v0.9.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -38,9 +39,9 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
-	golang.org/x/crypto v0.28.0 // indirect
+	golang.org/x/crypto v0.29.0 // indirect
 	golang.org/x/net v0.30.0 // indirect
-	golang.org/x/sys v0.26.0 // indirect
+	golang.org/x/sys v0.27.0 // indirect
 	nhooyr.io/websocket v1.8.17 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )

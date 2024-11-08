@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/xeptore/flaw/v8"
+
 	"github.com/xeptore/tgtd/sliceutil"
 )
 
@@ -140,14 +141,14 @@ func (p Parts) FlawP() flaw.P {
 	}
 }
 
-func (mpd *MPD) parts() (*Parts, error) {
-	contentType := mpd.Period.AdaptationSet.ContentType
+func (m *MPD) parts() (*Parts, error) {
+	contentType := m.Period.AdaptationSet.ContentType
 	if contentType != "audio" {
 		return nil, flaw.From(fmt.Errorf("unexpected content type: %s", contentType))
 	}
 
 	partsCount := 2
-	for _, s := range mpd.Period.AdaptationSet.Representation.SegmentTemplate.SegmentTimeline.S {
+	for _, s := range m.Period.AdaptationSet.Representation.SegmentTemplate.SegmentTimeline.S {
 		if s.R != 0 {
 			partsCount += s.R
 		} else {
@@ -155,7 +156,7 @@ func (mpd *MPD) parts() (*Parts, error) {
 		}
 	}
 	return &Parts{
-		InitializationURLTemplate: mpd.Period.AdaptationSet.Representation.SegmentTemplate.Media,
+		InitializationURLTemplate: m.Period.AdaptationSet.Representation.SegmentTemplate.Media,
 		Count:                     partsCount,
 	}, nil
 }
@@ -170,7 +171,7 @@ func ParseStreamInfo(r io.Reader) (*StreamInfo, error) {
 	flawP := flaw.P{"parsed_mpd": mpd.flawP()}
 
 	codec := mpd.Period.AdaptationSet.Representation.Codecs
-	if "flac" != codec {
+	if codec != "flac" {
 		return nil, flaw.From(fmt.Errorf("unexpected mpd codec: %s", codec)).Append(flawP)
 	}
 

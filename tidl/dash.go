@@ -27,19 +27,16 @@ type DashTrackStream struct {
 }
 
 func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err error) {
-	wg, ctx := errgroup.WithContext(ctx)
+	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(-1)
 
 	numBatches := mathutil.CeilInts(d.Info.Parts.Count, maxBatchParts)
 	flawP := flaw.P{"num_batches": numBatches}
 	for i := range numBatches {
 		wg.Go(func() error {
-			if err := d.downloadBatch(ctx, fileName, i); nil != err {
-				if errors.Is(err, context.Canceled) {
-					return nil
-				}
-				if errors.Is(err, auth.ErrUnauthorized) {
-					return auth.ErrUnauthorized
+			if err := d.downloadBatch(wgCtx, fileName, i); nil != err {
+				if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+					return err
 				}
 				return must.BeFlaw(err).Append(flawP)
 			}
@@ -48,8 +45,8 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 	}
 
 	if err := wg.Wait(); nil != err {
-		if errors.Is(err, auth.ErrUnauthorized) {
-			return auth.ErrUnauthorized
+		if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+			return err
 		}
 		return must.BeFlaw(err).Append(flawP)
 	}
@@ -62,10 +59,12 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 		if closeErr := f.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close track file: %v", closeErr)).Append(flawP)
 			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
+				if _, ok := errutil.IsAny(err, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
 			}
+			err = closeErr
 		}
 	}()
 
@@ -76,8 +75,15 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 		loopFlawP := flaw.P{"part_file_name": partFileName}
 		loopFlawPs[i] = loopFlawP
 		if err := d.writePartToTrackFile(f, partFileName); nil != err {
+			if err, ok := errutil.IsAny(err, context.Canceled); ok {
+				return err
+			}
 			return must.BeFlaw(err).Append(flawP)
 		}
+	}
+
+	if err := f.Sync(); nil != err {
+		return flaw.From(fmt.Errorf("failed to sync track file: %v", err)).Append(flawP)
 	}
 
 	return nil
@@ -92,14 +98,19 @@ func (d *DashTrackStream) writePartToTrackFile(f *os.File, partFileName string) 
 		if closeErr := fp.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr))
 			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
+				if _, ok := errutil.IsAny(err, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
 			}
+			err = closeErr
 		}
 	}()
 
 	if _, err := io.Copy(f, fp); nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return err
+		}
 		return flaw.From(fmt.Errorf("failed to copy track part to track file: %v", err))
 	}
 
@@ -122,11 +133,13 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr))
-			if nil != err && !errors.Is(err, auth.ErrUnauthorized) {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
+			if nil != err {
+				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
 			}
+			err = closeErr
 		}
 	}()
 
@@ -141,53 +154,68 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 		loopFlawPs[i] = loopFlawP
 		link := strings.Replace(d.Info.Parts.InitializationURLTemplate, "$Number$", strconv.Itoa(segmentIdx), 1)
 		loopFlawP["link"] = link
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
-		if nil != err {
-			return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
-		}
-		request.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
-
-		client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
-		response, err := client.Do(request)
-		if nil != err {
-			return flaw.From(fmt.Errorf("failed to send get track part request: %v", err)).Append(flawP)
-		}
-		loopFlawP["response"] = errutil.HTTPResponseFlawPayload(response)
-		if err := d.writeSegmentResponse(response, f); nil != err {
-			if !errors.Is(err, auth.ErrUnauthorized) {
-				return must.BeFlaw(err).Append(flawP)
+		if err := d.downloadSegment(ctx, link, f); nil != err {
+			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+				return err
 			}
-			return auth.ErrUnauthorized
+			return must.BeFlaw(err).Append(flawP)
 		}
 	}
 
 	return nil
 }
 
-func (d *DashTrackStream) writeSegmentResponse(response *http.Response, f *os.File) (err error) {
-	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close get track part response body: %v", closeErr))
-			if nil != err && !errors.Is(err, auth.ErrUnauthorized) {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
-			}
+func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *os.File) (err error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return err
 		}
-	}()
+		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err))
+	}
+	request.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	flawP := flaw.P{}
 
-	switch response.StatusCode {
+	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
+	response, err := client.Do(request)
+	if nil != err {
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return err
+		}
+		return flaw.From(fmt.Errorf("failed to send get track part request: %v", err)).Append(flawP)
+	}
+	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
+
+	switch status := response.StatusCode; status {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
 		return auth.ErrUnauthorized
 	default:
-		return flaw.From(fmt.Errorf("unexpected status code: %d", response.StatusCode))
+		return flaw.From(fmt.Errorf("unexpected status code received from get track part: %d", status)).Append(flawP)
 	}
 
+	defer func() {
+		if closeErr := response.Body.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close get track part response body: %v", closeErr)).Append(flawP)
+			if nil != err {
+				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
+			}
+			err = closeErr
+		}
+	}()
+
 	if n, err := io.Copy(f, response.Body); nil != err {
-		return flaw.From(fmt.Errorf("failed to write track part to file: %v", err))
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return err
+		}
+		return flaw.From(fmt.Errorf("failed to write track part to file: %v", err)).Append(flawP)
 	} else if n == 0 {
-		return flaw.From(fmt.Errorf("empty track part"))
+		return flaw.From(errors.New("empty track part")).Append(flawP)
+	} else {
+		flawP["bytes_written"] = n
 	}
 	return nil
 }

@@ -8,9 +8,12 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/tidl/must"
 )
+
+const trackTypeResponseItem = "track"
 
 type Track interface {
 	id() string
@@ -38,15 +41,15 @@ func (t *TrackInfo) FlawP() flaw.P {
 func (d *Downloader) Track(ctx context.Context, id string) error {
 	track, err := d.single(ctx, id)
 	if nil != err {
-		return fmt.Errorf("failed to get track info: %v", err)
+		return err
 	}
 
 	if err := track.createDir(d.basePath); nil != err {
-		return fmt.Errorf("failed to create track directory: %v", err)
+		return err
 	}
 
 	if err := d.download(ctx, track); nil != err {
-		return fmt.Errorf("failed to download track: %v", err)
+		return err
 	}
 
 	return nil
@@ -55,7 +58,7 @@ func (d *Downloader) Track(ctx context.Context, id string) error {
 func ReadTrackInfoFile(ctx context.Context, fileName string) (info *TrackInfo, err error) {
 	file, err := os.Open(fileName + ".json")
 	if nil != err {
-		return nil, fmt.Errorf("failed to open track info file: %v", err)
+		return nil, flaw.From(fmt.Errorf("failed to open track info file: %v", err))
 	}
 	defer func() {
 		if closeErr := file.Close(); nil != closeErr {
@@ -70,6 +73,9 @@ func ReadTrackInfoFile(ctx context.Context, fileName string) (info *TrackInfo, e
 
 	var trackInfo TrackInfo
 	if err := json.NewDecoder(file).DecodeContext(ctx, &trackInfo); nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return nil, err
+		}
 		return nil, flaw.From(fmt.Errorf("failed to decode track info file: %v", err))
 	}
 	return &trackInfo, nil

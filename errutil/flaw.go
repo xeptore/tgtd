@@ -1,8 +1,11 @@
 package errutil
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 
+	"github.com/BurntSushi/toml"
 	"github.com/xeptore/flaw/v8"
 )
 
@@ -20,4 +23,75 @@ func HTTPResponseFlawPayload(res *http.Response) flaw.P {
 	}
 	out["headers"] = headers
 	return out
+}
+
+type Flaw struct {
+	Inner        string        `toml:"inner"`
+	Records      []Record      `toml:"records"`
+	JoinedErrors []JoinedError `toml:"joined_errors"`
+	StackTrace   []StackTrace  `toml:"stack_trace"`
+}
+
+type Record struct {
+	Function string                 `toml:"function"`
+	Payload  map[string]interface{} `toml:"payload"`
+}
+
+type JoinedError struct {
+	Message          string      `toml:"message"`
+	CallerStackTrace *StackTrace `toml:"caller_stack_trace"`
+}
+
+type StackTrace struct {
+	File     string `toml:"file"`
+	Line     int    `toml:"line"`
+	Function string `toml:"function"`
+}
+
+func FlawToTOML(f *flaw.Flaw) ([]byte, error) {
+	records := make([]Record, len(f.Records))
+	for i, v := range f.Records {
+		records[i] = Record{
+			Function: v.Function,
+			Payload:  v.Payload,
+		}
+	}
+
+	joinedErrors := make([]JoinedError, len(f.JoinedErrors))
+	for i, v := range f.JoinedErrors {
+		je := JoinedError{
+			Message:          v.Message,
+			CallerStackTrace: nil,
+		}
+		if v.CallerStackTrace != nil {
+			je.CallerStackTrace = &StackTrace{
+				File:     v.CallerStackTrace.File,
+				Line:     v.CallerStackTrace.Line,
+				Function: v.CallerStackTrace.Function,
+			}
+		}
+		joinedErrors[i] = je
+	}
+
+	stackTraces := make([]StackTrace, len(f.StackTrace))
+	for i, v := range f.StackTrace {
+		stackTraces[i] = StackTrace{
+			File:     v.File,
+			Line:     v.Line,
+			Function: v.Function,
+		}
+	}
+
+	fl := Flaw{
+		Inner:        f.Inner,
+		Records:      records,
+		JoinedErrors: joinedErrors,
+		StackTrace:   stackTraces,
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(fl); err != nil {
+		return nil, flaw.From(fmt.Errorf("failed to encode flaw to toml: %v", err))
+	}
+
+	return buf.Bytes(), nil
 }

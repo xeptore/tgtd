@@ -39,6 +39,9 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	flawP["encoded_query_params"] = reqURL.RawQuery
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return nil, err
+		}
 		return nil, flaw.From(fmt.Errorf("failed to create get track stream URLs request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
@@ -46,16 +49,21 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
 	response, err := client.Do(request)
 	if nil != err {
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
 		return nil, flaw.From(fmt.Errorf("failed to send get track stream URLs request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get track stream URLs response body: %v", closeErr))
-			if nil != err && !errors.Is(err, auth.ErrUnauthorized) {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
+			if nil != err {
+				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
 			}
+			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -73,6 +81,9 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		Manifest         string `json:"manifest"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
 		return nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 	}
 	flawP["stream"] = flaw.P{"manifest_mime_type": responseBody.ManifestMimeType}
@@ -95,6 +106,9 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		}
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(responseBody.Manifest))
 		if err := json.NewDecoder(dec).DecodeContext(ctx, &manifest); nil != err {
+			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+				return nil, err
+			}
 			return nil, flaw.From(fmt.Errorf("failed to decode vnd.tidal.bt manifest: %v", err)).Append(flawP)
 		}
 		flawP["manifest"] = flaw.P{

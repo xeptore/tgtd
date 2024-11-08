@@ -2,6 +2,7 @@ package tidl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -9,7 +10,11 @@ import (
 	"strconv"
 
 	"github.com/goccy/go-json"
+	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/tidl/must"
 )
 
 func albumTrackDir(albumID string, volumeNumber int) string {
@@ -19,23 +24,25 @@ func albumTrackDir(albumID string, volumeNumber int) string {
 func (d *Downloader) Album(ctx context.Context, id string) error {
 	volumes, err := d.albumVolumes(ctx, id)
 	if nil != err {
-		return fmt.Errorf("failed to get album info: %v", err)
+		return err
 	}
 
-	wg, ctx := errgroup.WithContext(ctx)
+	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(albumDownloadConcurrency)
 
-	for i := range len(volumes) {
-		if err := d.prepareAlbumVolumeDir(ctx, id, i+1, volumes[i]); nil != err {
-			return fmt.Errorf("failed to prepare album volume directory: %v", err)
+	for i := range volumes {
+		volNum := i + 1
+		flawP := flaw.P{"volume_number": volNum}
+		if err := d.prepareAlbumVolumeDir(id, volNum, volumes[i]); nil != err {
+			return must.BeFlaw(err).Append(flawP)
 		}
 	}
 
 	for _, volumeTracks := range volumes {
 		for _, track := range volumeTracks {
 			wg.Go(func() error {
-				if err := d.download(ctx, &track); nil != err {
-					return fmt.Errorf("failed to download album track: %v", err)
+				if err := d.download(wgCtx, &track); nil != err {
+					return err
 				}
 				return nil
 			})
@@ -43,29 +50,45 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	}
 
 	if err := wg.Wait(); nil != err {
-		return fmt.Errorf("failed to download album tracks: %v", err)
+		return err
 	}
 
 	return nil
 }
 
-func (d *Downloader) prepareAlbumVolumeDir(ctx context.Context, albumID string, volNumber int, tracks []AlbumTrack) (err error) {
+func (d *Downloader) prepareAlbumVolumeDir(albumID string, volNumber int, tracks []AlbumTrack) (err error) {
 	volDir := path.Join(d.basePath, albumTrackDir(albumID, volNumber))
-	if err := os.MkdirAll(volDir, 0o0755); nil != err {
-		return fmt.Errorf("failed to create album volume directory: %v", err)
+	flawP := flaw.P{"volume_dir": volDir}
+	if err := os.RemoveAll(volDir); nil != err {
+		return flaw.From(fmt.Errorf("failed to delete possibly existing album volume directory: %v", err)).Append(flawP)
 	}
-	f, err := os.OpenFile(path.Join(volDir, "volume.json"), os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
+	if err := os.MkdirAll(volDir, 0o0755); nil != err {
+		return flaw.From(fmt.Errorf("failed to create album volume directory: %v", err)).Append(flawP)
+	}
+
+	volumeInfoFilePath := path.Join(volDir, "volume.json")
+	flawP["volume_info_file"] = volumeInfoFilePath
+	f, err := os.OpenFile(volumeInfoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
-		return fmt.Errorf("failed to create volume info file: %v", err)
+		return flaw.From(fmt.Errorf("failed to create volume info file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			err = fmt.Errorf("failed to close volume info file properly: %v", err)
+			closeErr = flaw.From(fmt.Errorf("failed to close volume info file properly: %v", err)).Append(flawP)
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
-	if err := json.NewEncoder(f).EncodeContext(ctx, tracks); nil != err {
-		return fmt.Errorf("failed to encode and write volume info json file content: %v", err)
+	if err := json.NewEncoder(f).Encode(tracks); nil != err {
+		return flaw.From(fmt.Errorf("failed to encode and write volume info json file content: %v", err)).Append(flawP)
 	}
+	if err := f.Sync(); nil != err {
+		return flaw.From(fmt.Errorf("failed to sync volume info file: %v", err)).Append(flawP)
+	}
+
 	return nil
 }
 
@@ -103,7 +126,7 @@ func (t *AlbumTrack) info() TrackInfo {
 	if nil != t.Version {
 		title = fmt.Sprintf("%s (%s)", t.Title, *t.Version)
 	} else {
-		title = fmt.Sprintf("%s", t.Title)
+		title = t.Title
 	}
 	return TrackInfo{
 		Duration:   t.Duration,
@@ -116,18 +139,30 @@ func (t *AlbumTrack) info() TrackInfo {
 func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (tracks []AlbumTrack, remaining int, err error) {
 	albumURL, err := url.JoinPath(fmt.Sprintf(albumItemsAPIFormat, id))
 	if nil != err {
-		return nil, 0, fmt.Errorf("failed to join track base URL with track id: %v", err)
+		return nil, 0, flaw.From(fmt.Errorf("failed to join track base URL with track id: %v", err))
 	}
+	flawP := flaw.P{"url": albumURL}
 
 	response, err := d.getPagedItems(ctx, albumURL, page)
 	if nil != err {
-		return nil, 0, fmt.Errorf("failed to get album items: %v", err)
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, 0, err
+		}
+		return nil, 0, must.BeFlaw(err).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
-			err = fmt.Errorf("failed to close get album page items response body: %v", closeErr)
+			closeErr = flaw.From(fmt.Errorf("failed to close get album page items response body: %v", closeErr)).Append(flawP)
+			if nil != err {
+				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
+			}
+			err = closeErr
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	var responseBody struct {
 		TotalNumberOfItems int `json:"totalNumberOfItems"`
@@ -151,15 +186,18 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		return nil, 0, fmt.Errorf("failed to decode album response: %v", err)
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, 0, err
+		}
+		return nil, 0, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
 	}
 	thisPageItems := len(responseBody.Items)
 	if thisPageItems == 0 {
-		return nil, 0, fmt.Errorf("no items found in album response")
+		return nil, 0, os.ErrNotExist
 	}
 
 	for _, v := range responseBody.Items {
-		if v.Type != "track" {
+		if v.Type != trackTypeResponseItem {
 			continue
 		}
 
@@ -190,13 +228,25 @@ func (d *Downloader) albumVolumes(ctx context.Context, id string) (AlbumVolumes,
 	var (
 		tracks              [][]AlbumTrack
 		currentVolumeTracks []AlbumTrack
-		currentVolume       int = 1
+		currentVolume       = 1
 	)
+	loopFlawPs := []flaw.P{}
+	flawP := flaw.P{"loop_flaws": loopFlawPs}
 	for i := 0; ; i++ {
+		loopFlaw := flaw.P{"page": i}
+		loopFlawPs = append(loopFlawPs, loopFlaw)
+		flawP["loop_flaws"] = loopFlawPs
 		pageTracks, rem, err := d.albumTracksPage(ctx, id, i)
 		if nil != err {
-			return nil, fmt.Errorf("failed to get album items: %v", err)
+			if errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+				return nil, err
+			}
+			return nil, must.BeFlaw(err).Append(flawP)
 		}
+		loopFlaw["remaining"] = rem
 
 		for _, track := range pageTracks {
 			switch track.VolumeNumber {
@@ -207,7 +257,7 @@ func (d *Downloader) albumVolumes(ctx context.Context, id string) (AlbumVolumes,
 				currentVolumeTracks = []AlbumTrack{track}
 				currentVolume++
 			default:
-				return nil, fmt.Errorf("unexpected volume number: %d", track.VolumeNumber)
+				return nil, flaw.From(fmt.Errorf("unexpected volume number: %d", track.VolumeNumber)).Append(flawP)
 			}
 		}
 
@@ -218,5 +268,5 @@ func (d *Downloader) albumVolumes(ctx context.Context, id string) (AlbumVolumes,
 
 	tracks = append(tracks, currentVolumeTracks)
 
-	return AlbumVolumes(tracks), nil
+	return tracks, nil
 }

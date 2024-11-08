@@ -2,7 +2,6 @@ package tidl
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,13 +27,12 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 		return err
 	}
 
-	wg, ctx := errgroup.WithContext(ctx)
-	wg.SetLimit(mixDownloadConcurrency)
-
 	if err := d.prepareMixDir(ctx, id, tracks); nil != err {
 		return err
 	}
 
+	wg, ctx := errgroup.WithContext(ctx)
+	wg.SetLimit(mixDownloadConcurrency)
 	for _, track := range tracks {
 		wg.Go(func() error { return d.download(ctx, &track) })
 	}
@@ -55,12 +53,19 @@ func (d *Downloader) prepareMixDir(ctx context.Context, id string, tracks []MixT
 	if err := os.MkdirAll(mixDir, 0o0755); nil != err {
 		return flaw.From(fmt.Errorf("failed to create mix directory: %v", err)).Append(flawP)
 	}
+
 	f, err := os.OpenFile(path.Join(mixDir, "info.json"), os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).EncodeContext(ctx, tracks); nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return err
+		}
 		return flaw.From(fmt.Errorf("failed to encode mix info: %v", err)).Append(flawP)
+	}
+	if err := f.Close(); nil != err {
+		return flaw.From(fmt.Errorf("failed to close mix info file: %v", err)).Append(flawP)
 	}
 	return nil
 }
@@ -98,7 +103,7 @@ func (t *MixTrack) info() TrackInfo {
 	if nil != t.Version {
 		title = fmt.Sprintf("%s (%s)", t.Title, *t.Version)
 	} else {
-		title = fmt.Sprintf("%s", t.Title)
+		title = t.Title
 	}
 	return TrackInfo{
 		Duration:   t.Duration,
@@ -117,8 +122,8 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 
 	response, err := d.getPagedItems(ctx, mixURL, page)
 	if nil != err {
-		if errors.Is(err, auth.ErrUnauthorized) {
-			return nil, 0, auth.ErrUnauthorized
+		if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, 0, err
 		}
 		return nil, 0, must.BeFlaw(err).Append(flawP)
 	}
@@ -126,10 +131,12 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get mix page items response body: %v", closeErr)).Append(flawP)
 			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
+				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
 			}
+			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -155,6 +162,9 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, 0, err
+		}
 		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 	}
 	thisPageItems := len(responseBody.Items)
@@ -163,7 +173,7 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 	}
 
 	for _, v := range responseBody.Items {
-		if v.Type != "track" {
+		if v.Type != trackTypeResponseItem {
 			continue
 		}
 		mixTrack := MixTrack{
@@ -183,10 +193,17 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 
 func (d *Downloader) mixTracks(ctx context.Context, id string) ([]MixTrack, error) {
 	var tracks []MixTrack
+	var loopFlawPs []flaw.P
+	flawP := flaw.P{"loop_flaw_payloads": loopFlawPs}
 	for i := 0; ; i++ {
+		loopFlawP := flaw.P{"page": i}
+		loopFlawPs = append(loopFlawPs, loopFlawP)
 		pageTracks, rem, err := d.mixTracksPage(ctx, id, i)
 		if nil != err {
-			return nil, err
+			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+				return nil, err
+			}
+			return nil, must.BeFlaw(err).Append(flawP)
 		}
 		tracks = append(tracks, pageTracks...)
 

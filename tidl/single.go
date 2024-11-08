@@ -11,9 +11,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/xeptore/tgtd/tidl/auth"
-
 	"github.com/goccy/go-json"
+	"github.com/xeptore/flaw/v8"
+
+	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/tidl/auth"
+	"github.com/xeptore/tgtd/tidl/must"
 )
 
 type Artist struct {
@@ -49,8 +52,10 @@ func (t *SingleTrack) FileName() string {
 }
 
 func (t *SingleTrack) createDir(basePath string) error {
-	if err := os.MkdirAll(filepath.Dir(path.Join(basePath, t.FileName())), 0o755); nil != err {
-		return fmt.Errorf("failed to create track directory: %v", err)
+	dirPath := filepath.Dir(path.Join(basePath, t.FileName()))
+	flawP := flaw.P{"file_path": dirPath}
+	if err := os.MkdirAll(dirPath, 0o755); nil != err {
+		return flaw.From(fmt.Errorf("failed to create track directory: %v", err)).Append(flawP)
 	}
 	return nil
 }
@@ -64,7 +69,7 @@ func (t *SingleTrack) info() TrackInfo {
 	if nil != t.Version {
 		title = fmt.Sprintf("%s (%s)", t.Title, *t.Version)
 	} else {
-		title = fmt.Sprintf("%s", t.Title)
+		title = t.Title
 	}
 	return TrackInfo{
 		Duration:   t.Duration,
@@ -74,31 +79,47 @@ func (t *SingleTrack) info() TrackInfo {
 	}
 }
 
-func (d *Downloader) single(ctx context.Context, id string) (*SingleTrack, error) {
+func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, err error) {
 	trackURL := fmt.Sprintf(trackAPIFormat, id)
+	flawP := flaw.P{"url": trackURL}
 	reqURL, err := url.Parse(trackURL)
 	if nil != err {
-		return nil, fmt.Errorf("failed to parse track URL: %v", err)
+		return nil, flaw.From(fmt.Errorf("failed to parse track URL: %v", err)).Append(flawP)
 	}
 	params := make(url.Values, 1)
 	params.Add("countryCode", "US")
 	reqURL.RawQuery = params.Encode()
+	flawP["encoded_query_params"] = reqURL.RawQuery
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
-		return nil, fmt.Errorf("failed to create get track info request: %v", err)
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: 5 * time.Second}
+	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		return nil, fmt.Errorf("failed to send get track info request: %v", err)
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
-			err = fmt.Errorf("failed to close get track info response body: %v", closeErr)
+			closeErr = flaw.From(fmt.Errorf("failed to close get track info response body: %v", closeErr))
+			if nil != err {
+				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
+			}
+			err = closeErr
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
@@ -109,14 +130,17 @@ func (d *Downloader) single(ctx context.Context, id string) (*SingleTrack, error
 			UserMessage string `json:"userMessage"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			return nil, fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)
+			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+				return nil, err
+			}
+			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return nil, auth.ErrUnauthorized
 		}
-		return nil, fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)
+		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
 	default:
-		return nil, fmt.Errorf("unexpected status code: %d", code)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
 	var responseBody struct {
@@ -133,7 +157,10 @@ func (d *Downloader) single(ctx context.Context, id string) (*SingleTrack, error
 		Version *string `json:"version"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 	}
 
 	track := SingleTrack{

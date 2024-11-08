@@ -13,20 +13,22 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/ptr"
+	"github.com/xeptore/tgtd/result"
+	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const (
 	clientID      = "7m7Ap0JC9j1cOM3n"
-	clientSecret  = "vRAdA108tlvkJpTsGZS8rGZ7xTlbJ0qaZ2K9saEzsgY="
+	clientSecret  = "vRAdA108tlvkJpTsGZS8rGZ7xTlbJ0qaZ2K9saEzsgY=" //nolint:gosec
 	baseURL       = "https://auth.tidal.com/v1/oauth2"
 	tokenFilePath = "token.json"
 )
 
-var (
-	ErrUnauthorized = errors.New("Unauthorized")
-)
+var ErrUnauthorized = errors.New("Unauthorized")
 
 type Credentials struct {
 	AccessToken  string
@@ -38,6 +40,7 @@ type Auth struct {
 	Creds Credentials
 }
 
+// Load returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func Load(ctx context.Context) (*Auth, error) {
 	creds, err := load(ctx)
 	if nil != err {
@@ -52,22 +55,47 @@ type File struct {
 	ExpiresAt    int64  `json:"expiresAt"`
 }
 
-func load(ctx context.Context) (*Credentials, error) {
+func (f File) flawP() flaw.P {
+	return flaw.P{
+		"access_token":  f.AccessToken,
+		"refresh_token": f.RefreshToken,
+		"expires_at":    f.ExpiresAt,
+	}
+}
+
+// load returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
+func load(ctx context.Context) (creds *Credentials, err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_RDONLY, 0o0644)
 	if nil != err {
 		if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
+			return nil, flaw.From(fmt.Errorf("failed to open token file: %v", err))
 		}
 		return nil, ErrUnauthorized
 	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close token file: %v", closeErr))
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
 	var content File
 	if err := json.NewDecoder(f).DecodeContext(ctx, &content); nil != err {
-		return nil, err
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err))
 	}
 	if time.Now().Unix() > content.ExpiresAt {
 		return handleUnauthorized(ctx, content.RefreshToken)
 	}
 	if err := verifyAccessToken(ctx, content.AccessToken); nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled, context.DeadlineExceeded); ok {
+			return nil, err
+		}
 		if errors.Is(err, ErrUnauthorized) {
 			return handleUnauthorized(ctx, content.RefreshToken)
 		}
@@ -76,11 +104,12 @@ func load(ctx context.Context) (*Credentials, error) {
 	return ptr.Of(Credentials(content)), nil
 }
 
+// handleUnauthorized returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func handleUnauthorized(ctx context.Context, rt string) (*Credentials, error) {
 	refreshResult, err := refreshToken(ctx, rt)
 	if nil != err {
-		if errors.Is(err, ErrUnauthorized) {
-			return nil, ErrUnauthorized
+		if err, ok := errutil.IsAny(err, ErrUnauthorized, context.Canceled, context.DeadlineExceeded); ok {
+			return nil, err
 		}
 		return nil, err
 	}
@@ -89,19 +118,31 @@ func handleUnauthorized(ctx context.Context, rt string) (*Credentials, error) {
 		RefreshToken: rt,
 		ExpiresAt:    refreshResult.ExpiresAt,
 	}
-	if err := save(ctx, newFileContent); nil != err {
+	if err := save(newFileContent); nil != err {
 		return nil, err
 	}
 	return ptr.Of(Credentials(newFileContent)), nil
 }
 
-func save(ctx context.Context, content File) error {
+// save returns flaw.Flaw as error if fails.
+func save(content File) (err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
 	if nil != err {
-		return err
+		return flaw.From(fmt.Errorf("failed to open token file: %w", err))
 	}
-	if err := json.NewEncoder(f).EncodeContext(ctx, content); nil != err {
-		return err
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close token file: %w", closeErr))
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+
+	if err := json.NewEncoder(f).EncodeWithOption(content); nil != err {
+		return flaw.From(fmt.Errorf("failed to encode token file: %w", err))
 	}
 	return nil
 }
@@ -111,33 +152,51 @@ type RefreshTokenResult struct {
 	ExpiresAt   int64
 }
 
-func refreshToken(ctx context.Context, refreshToken string) (*RefreshTokenResult, error) {
+// refreshToken returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
+func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenResult, err error) {
 	requestURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
-		return nil, err
+		return nil, flaw.From(fmt.Errorf("failed to create token verification URL: %v", err))
 	}
+	flawP := flaw.P{"url": requestURL}
 	requestBodyParams := make(url.Values, 4)
 	requestBodyParams.Add("client_id", clientID)
 	requestBodyParams.Add("refresh_token", refreshToken)
 	requestBodyParams.Add("grant_type", "refresh_token")
 	requestBodyParams.Add("scope", "r_usr+w_usr+w_sub")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParams.Encode()))
+	requestBodyParamsStr := requestBodyParams.Encode()
+	flawP["request_body_params"] = requestBodyParamsStr
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParamsStr))
 	if nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to create refresh token request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Add("Authorization", "Basic "+base64.StdEncoding.Strict().EncodeToString([]byte(clientID+":"+clientSecret)))
 
-	client := http.Client{Timeout: 5 * time.Second}
+	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to issue refresh token request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr))
+			if nil != err {
+				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr).Append(flawP)
+					return
+				}
+			}
 			err = closeErr
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
@@ -149,25 +208,31 @@ func refreshToken(ctx context.Context, refreshToken string) (*RefreshTokenResult
 			ErrorDescription string `json:"error_description"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			return nil, err
+			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+				return nil, err
+			}
+			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 400 && responseBody.SubStatus == 11101 && responseBody.Error == "invalid_grant" && responseBody.ErrorDescription == "Token could not be verified" {
 			return nil, ErrUnauthorized
 		}
-		return nil, fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.ErrorDescription)
+		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.ErrorDescription)).Append(flawP)
 	default:
-		return nil, fmt.Errorf("unexpected status code: %d", code)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
 	var responseBody struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 	}
-	expiresAt, err := extractExpiresAt(ctx, responseBody.AccessToken)
+	expiresAt, err := extractExpiresAt(responseBody.AccessToken)
 	if nil != err {
-		return nil, err
+		return nil, must.BeFlaw(err).Append(flawP)
 	}
 
 	return &RefreshTokenResult{
@@ -176,44 +241,62 @@ func refreshToken(ctx context.Context, refreshToken string) (*RefreshTokenResult
 	}, nil
 }
 
-func extractExpiresAt(ctx context.Context, accessToken string) (int64, error) {
+// extractExpiresAt returns either [flaw.Flaw], [context.Canceled], or [context.DeadlineExceeded] errors if fails.
+func extractExpiresAt(accessToken string) (int64, error) {
 	splits := strings.SplitN(accessToken, ".", 3)
 	if len(splits) != 3 {
-		return 0, fmt.Errorf("shit")
+		return 0, flaw.From(fmt.Errorf("unexpected access token format: %s", accessToken))
 	}
 	var obj struct {
 		ExpiresAt int64 `json:"exp"`
 	}
-	if err := json.NewDecoder(base64.NewDecoder(base64.StdEncoding, strings.NewReader(splits[1]))).DecodeContext(ctx, &obj); nil != err {
-		return 0, err
+	if err := json.NewDecoder(base64.NewDecoder(base64.StdEncoding, strings.NewReader(splits[1]))).Decode(&obj); nil != err {
+		if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			return 0, err
+		}
+		return 0, flaw.From(fmt.Errorf("failed to decode access token payload: %v", err))
 	}
 	return obj.ExpiresAt, nil
 }
 
+// VerifyAccessToken returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails if fails.
 func (a *Auth) VerifyAccessToken(ctx context.Context) error {
 	return verifyAccessToken(ctx, a.Creds.AccessToken)
 }
 
-func verifyAccessToken(ctx context.Context, accessToken string) error {
+// verifyAccessToken returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails if fails.
+func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.tidal.com/v1/sessions", nil)
 	if nil != err {
-		return err
+		return flaw.From(fmt.Errorf("failed to create verify access token request: %w", err))
 	}
 	request.Header.Add("Authorization", "Bearer "+accessToken)
 
-	client := http.Client{Timeout: 5 * time.Second}
+	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		return err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return err
+		}
+		return flaw.From(fmt.Errorf("failed to issue verify access token request: %w", err))
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close response body: %w", closeErr))
+			if nil != err {
+				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr)
+					return
+				}
+			}
 			err = closeErr
 		}
 	}()
+	flawP := flaw.P{"response": errutil.HTTPResponseFlawPayload(response)}
 
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
+		return nil
 	case http.StatusUnauthorized:
 		var responseBody struct {
 			Status      int    `json:"status"`
@@ -221,17 +304,18 @@ func verifyAccessToken(ctx context.Context, accessToken string) error {
 			UserMessage string `json:"userMessage"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			return err
+			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+				return err
+			}
+			return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return ErrUnauthorized
 		}
-		return fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)
+		return flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
 	default:
-		return fmt.Errorf("unexpected status code: %d", code)
+		return flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
-
-	return nil
 }
 
 type authorizationResponse struct {
@@ -241,12 +325,10 @@ type authorizationResponse struct {
 	Interval   int
 }
 
-type AuthorizationResult struct {
-	Auth *Auth
-	Err  error
-}
+var ErrAuthWaitTimeout = errors.New("authorization wait timeout")
 
-func NewAuthorizer(ctx context.Context) (link string, wait <-chan AuthorizationResult, err error) {
+// NewAuthorizer returns either [flaw.Flaw], [context.Canceled], or [context.DeadlineExceeded] errors if fails.
+func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth], err error) {
 	res, err := issueAuthorizationRequest(ctx)
 	if nil != err {
 		return "", nil, err
@@ -254,7 +336,7 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan AuthorizationR
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(res.ExpiresIn)*time.Second)
 	ticker := time.NewTicker(time.Duration(res.Interval) * time.Second * 5)
-	done := make(chan AuthorizationResult)
+	done := make(chan result.Of[Auth])
 
 	go func() {
 		defer close(done)
@@ -264,7 +346,13 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan AuthorizationR
 		for {
 			select {
 			case <-ctx.Done():
-				done <- AuthorizationResult{Err: ctx.Err()}
+				err := ctx.Err()
+				if errors.Is(err, context.DeadlineExceeded) {
+					done <- result.Err[Auth](ErrAuthWaitTimeout)
+					return
+				}
+				err = flaw.From(fmt.Errorf("authorization wait context errored with unknown error: %v", err))
+				done <- result.Err[Auth](err)
 				return
 			case <-ticker.C:
 				creds, err := res.poll(ctx)
@@ -272,14 +360,28 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan AuthorizationR
 					if errors.Is(err, ErrUnauthorized) {
 						continue waitloop
 					}
-					done <- AuthorizationResult{Err: err}
+					if errors.Is(err, context.Canceled) {
+						done <- result.Err[Auth](context.Canceled)
+						return
+					}
+					if errors.Is(err, context.DeadlineExceeded) {
+						if ctx.Err() == nil {
+							// The poller has timed out, not the auth-wait context
+							continue waitloop
+						}
+						done <- result.Err[Auth](ErrAuthWaitTimeout)
+						return
+					}
+					done <- result.Err[Auth](err)
 					return
 				}
-				if err := save(ctx, File(*creds)); nil != err {
-					done <- AuthorizationResult{Err: err}
+				f := File(*creds)
+				flawP := flaw.P{"creds": f.flawP()}
+				if err := save(f); nil != err {
+					done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
 					return
 				}
-				done <- AuthorizationResult{Auth: &Auth{Creds: *creds}}
+				done <- result.Ok(&Auth{Creds: *creds})
 				return
 			}
 		}
@@ -288,33 +390,48 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan AuthorizationR
 	return res.URL, done, nil
 }
 
+// issueAuthorizationRequest returns either [flaw.Flaw], [context.Canceled], or [context.DeadlineExceeded] errors if fails.
 func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse, err error) {
 	requestURL, err := url.JoinPath(baseURL, "/device_authorization")
 	if nil != err {
-		return nil, err
+		return nil, flaw.From(fmt.Errorf("failed to create device authorization URL: %v", err))
 	}
+	flawP := flaw.P{"url": requestURL}
 	requestBodyParams := make(url.Values, 2)
 	requestBodyParams.Add("client_id", clientID)
 	requestBodyParams.Add("scope", "r_usr+w_usr+w_sub")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParams.Encode()))
+	requestBodyParamsStr := requestBodyParams.Encode()
+	flawP["request_body_params"] = requestBodyParamsStr
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParamsStr))
 	if nil != err {
-		return nil, err
+		return nil, flaw.From(fmt.Errorf("failed to create device authorization request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	client := http.Client{Timeout: 5 * time.Second}
+	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to issue authorization request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr)).Append(flawP)
+			if nil != err {
+				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr).Append(flawP)
+					return
+				}
+			}
 			err = closeErr
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TODO")
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", response.StatusCode)).Append(flawP)
 	}
 
 	var responseBody struct {
@@ -325,49 +442,80 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 		Interval        int    `json:"interval"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to decode response body: %v", err)).Append(flawP)
+	}
+	flawP["responseBody"] = flaw.P{
+		"device_code":      responseBody.DeviceCode,
+		"user_code":        responseBody.UserCode,
+		"verification_uri": responseBody.VerificationURI,
+		"expires_in":       responseBody.ExpiresIn,
+		"interval":         responseBody.Interval,
 	}
 
+	//nolint:exhaustruct
 	authorizationURL := url.URL{
 		Scheme: "https",
 		Host:   responseBody.VerificationURI,
 		Path:   responseBody.UserCode,
 	}
+	authorizationURLStr := authorizationURL.String()
+	flawP["authorizationURL"] = authorizationURLStr
 	return &authorizationResponse{
-		URL:        authorizationURL.String(),
+		URL:        authorizationURLStr,
 		DeviceCode: responseBody.DeviceCode,
 		ExpiresIn:  responseBody.ExpiresIn,
 		Interval:   responseBody.Interval,
 	}, nil
 }
 
+// poll returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, err error) {
+	// cloning the context to be able to differentiate between parent context's deadline and the internal HTTP request's by the caller
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	requestURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
-		return nil, err
+		return nil, flaw.From(fmt.Errorf("failed to create token URL: %w", err))
 	}
+	flawP := flaw.P{"url": requestURL}
 	requestBodyParams := make(url.Values, 4)
 	requestBodyParams.Add("client_id", clientID)
 	requestBodyParams.Add("scope", "r_usr+w_usr+w_sub")
 	requestBodyParams.Add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 	requestBodyParams.Add("device_code", r.DeviceCode)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParams.Encode()))
+	requestBodyStr := requestBodyParams.Encode()
+	flawP["request_body_str"] = requestBodyStr
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyStr))
 	if nil != err {
-		return nil, err
+		return nil, flaw.From(fmt.Errorf("failed to create token request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Add("Authorization", "Basic "+base64.StdEncoding.Strict().EncodeToString([]byte(clientID+":"+clientSecret)))
 
-	client := http.Client{Timeout: 5 * time.Second}
+	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to issue token request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr)).Append(flawP)
+			if nil != err {
+				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
+					err = must.BeFlaw(err).Join(closeErr).Append(flawP)
+					return
+				}
+			}
 			err = closeErr
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
@@ -379,14 +527,17 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 			ErrorDescription string `json:"error_description"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			return nil, err
+			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+				return nil, err
+			}
+			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 400 && responseBody.Error == "authorization_pending" && responseBody.SubStatus == 1002 && responseBody.ErrorDescription == "Device Authorization code is not authorized yet" {
 			return nil, ErrUnauthorized
 		}
-		return nil, fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.Error)
+		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.Error)).Append(flawP)
 	default:
-		return nil, fmt.Errorf("unexpected status code: %d", code)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
 	var responseBody struct {
@@ -394,9 +545,12 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		return nil, err
+		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
+			return nil, err
+		}
+		return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 	}
-	expiresAt, err := extractExpiresAt(ctx, responseBody.AccessToken)
+	expiresAt, err := extractExpiresAt(responseBody.AccessToken)
 	if nil != err {
 		return nil, err
 	}
