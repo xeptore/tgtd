@@ -150,6 +150,10 @@ func run(cliCtx *cli.Context) (err error) {
 		telegram.Options{
 			SessionStorage: &session.FileStorage{Path: "session.json"},
 			UpdateHandler:  updateHandler,
+			MaxRetries:     10,
+			AckBatchSize:   100,
+			AckInterval:    10 * time.Second,
+			RetryInterval:  3 * time.Second,
 		},
 	)
 	logger.Debug().Msg("Telegram client initialized.")
