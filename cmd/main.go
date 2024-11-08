@@ -65,15 +65,6 @@ func main() {
 		Compiled: constant.CompileTime,
 		Suggest:  true,
 		Usage:    "Telegram TIDAL Uploader",
-		Flags: []cli.Flag{
-			//nolint:exhaustruct
-			&cli.StringFlag{
-				Name:     flagConfigFilePath,
-				Aliases:  []string{"c"},
-				Usage:    "Config file path",
-				Required: false,
-			},
-		},
 		Commands: []*cli.Command{
 			//nolint:exhaustruct
 			{
@@ -81,6 +72,15 @@ func main() {
 				Aliases: []string{"r"},
 				Usage:   "Run the bot",
 				Action:  run,
+				Flags: []cli.Flag{
+					//nolint:exhaustruct
+					&cli.StringFlag{
+						Name:     flagConfigFilePath,
+						Aliases:  []string{"c"},
+						Usage:    "Config file path",
+						Required: false,
+					},
+				},
 			},
 		},
 	}
