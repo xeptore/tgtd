@@ -12,6 +12,11 @@ const (
 )
 
 func TrackDownloadSleepMS() time.Duration {
-	millis := (rand.IntN(4)+2)*1000 + rand.N(1000)
+	const (
+		from = 1
+		to   = 5
+	)
+
+	millis := (rand.IntN(to-from)+from)*1000 + rand.N(1000)
 	return time.Duration(millis) * time.Millisecond
 }
