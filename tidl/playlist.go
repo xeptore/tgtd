@@ -216,6 +216,8 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 				err = flaw.From(errors.New("context was ended")).Join(closeErr)
 			case errors.Is(err, context.DeadlineExceeded):
 				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, os.ErrNotExist):
+				err = flaw.From(errors.New("no items in result")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:

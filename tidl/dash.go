@@ -239,8 +239,8 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	}()
 
 	if n, err := io.Copy(f, response.Body); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return err
+		if errutil.IsContext(ctx) {
+			return ctx.Err()
 		}
 		return flaw.From(fmt.Errorf("failed to write track part to file: %v", err)).Append(flawP)
 	} else if n == 0 {

@@ -169,6 +169,7 @@ func run(cliCtx *cli.Context) (err error) {
 		logger.Debug().Msg("Stopping Telegram bot")
 		if stopErr := stop(); nil != stopErr {
 			err = fmt.Errorf("failed to stop Telegram background connection: %v", stopErr)
+			return
 		}
 		logger.Debug().Msg("Telegram bot has stopped")
 	}()
