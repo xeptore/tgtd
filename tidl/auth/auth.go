@@ -88,10 +88,7 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 		}
 	}()
 	var content File
-	if err := json.NewDecoder(f).DecodeContext(ctx, &content); nil != err {
-		if errutil.IsContext(ctx) {
-			return nil, ctx.Err()
-		}
+	if err := json.NewDecoder(f).Decode(&content); nil != err {
 		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err))
 	}
 	if time.Now().Unix() > content.ExpiresAt {

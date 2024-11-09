@@ -66,6 +66,8 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 				err = closeErr
 			case errutil.IsContext(ctx):
 				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
 			case errors.Is(err, auth.ErrUnauthorized):
 				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
 			case errutil.IsFlaw(err):
@@ -90,10 +92,14 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		Manifest         string `json:"manifest"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if errutil.IsContext(ctx) {
+		switch {
+		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 	}
 	flawP["stream"] = flaw.P{"manifest_mime_type": responseBody.ManifestMimeType}
 

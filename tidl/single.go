@@ -145,10 +145,14 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			UserMessage string `json:"userMessage"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			if errutil.IsContext(ctx) {
+			switch {
+			case errutil.IsContext(ctx):
 				return nil, ctx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			default:
+				return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 			}
-			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return nil, auth.ErrUnauthorized
@@ -172,10 +176,14 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		Version *string `json:"version"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if errutil.IsContext(ctx) {
+		switch {
+		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 	}
 
 	track := SingleTrack{
