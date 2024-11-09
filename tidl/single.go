@@ -2,6 +2,7 @@ package tidl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -54,6 +55,7 @@ func (t *SingleTrack) FileName() string {
 func (t *SingleTrack) createDir(basePath string) error {
 	dirPath := filepath.Dir(path.Join(basePath, t.FileName()))
 	flawP := flaw.P{"file_path": dirPath}
+
 	if err := os.MkdirAll(dirPath, 0o755); nil != err {
 		return flaw.From(fmt.Errorf("failed to create track directory: %v", err)).Append(flawP)
 	}
@@ -86,14 +88,16 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	if nil != err {
 		return nil, flaw.From(fmt.Errorf("failed to parse track URL: %v", err)).Append(flawP)
 	}
+
 	params := make(url.Values, 1)
 	params.Add("countryCode", "US")
 	reqURL.RawQuery = params.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
+
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}
@@ -102,21 +106,32 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get track info response body: %v", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, auth.ErrUnauthorized):
+				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -130,8 +145,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			UserMessage string `json:"userMessage"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
+			if errutil.IsContext(ctx) {
+				return nil, ctx.Err()
 			}
 			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 		}
@@ -157,8 +172,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		Version *string `json:"version"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 	}

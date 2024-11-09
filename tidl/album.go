@@ -15,6 +15,7 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/tidl/auth"
 	"github.com/xeptore/tgtd/tidl/must"
 )
 
@@ -30,7 +31,6 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 
 	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(ratelimit.AlbumDownloadConcurrency)
-
 	for i := range volumes {
 		volNum := i + 1
 		flawP := flaw.P{"volume_number": volNum}
@@ -41,12 +41,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 
 	for _, volumeTracks := range volumes {
 		for _, track := range volumeTracks {
-			wg.Go(func() error {
-				if err := d.download(wgCtx, &track); nil != err {
-					return err
-				}
-				return nil
-			})
+			wg.Go(func() error { return d.download(wgCtx, &track) })
 		}
 	}
 
@@ -146,21 +141,34 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 
 	response, err := d.getPagedItems(ctx, albumURL, page)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, 0, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, 0, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, 0, context.DeadlineExceeded
+		case errors.Is(err, auth.ErrUnauthorized):
+			return nil, 0, auth.ErrUnauthorized
+		case errutil.IsFlaw(err):
+			return nil, 0, must.BeFlaw(err).Append(flawP)
+		default:
+			panic(errutil.UnknownError(err))
 		}
-		return nil, 0, must.BeFlaw(err).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get album page items response body: %v", closeErr)).Append(flawP)
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -187,10 +195,14 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, 0, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, 0, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, 0, context.DeadlineExceeded
+		default:
+			return nil, 0, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
 		}
-		return nil, 0, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
 	}
 	thisPageItems := len(responseBody.Items)
 	if thisPageItems == 0 {
@@ -231,21 +243,30 @@ func (d *Downloader) albumVolumes(ctx context.Context, id string) (AlbumVolumes,
 		currentVolumeTracks []AlbumTrack
 		currentVolume       = 1
 	)
+
 	loopFlawPs := []flaw.P{}
 	flawP := flaw.P{"loop_flaws": loopFlawPs}
+
 	for i := 0; ; i++ {
 		loopFlaw := flaw.P{"page": i}
 		loopFlawPs = append(loopFlawPs, loopFlaw)
 		flawP["loop_flaws"] = loopFlawPs
 		pageTracks, rem, err := d.albumTracksPage(ctx, id, i)
 		if nil != err {
-			if errors.Is(err, os.ErrNotExist) {
+			switch {
+			case errutil.IsContext(ctx):
+				return nil, ctx.Err()
+			case errors.Is(err, os.ErrNotExist):
 				break
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			case errors.Is(err, auth.ErrUnauthorized):
+				return nil, auth.ErrUnauthorized
+			case errutil.IsFlaw(err):
+				return nil, must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
-			}
-			return nil, must.BeFlaw(err).Append(flawP)
 		}
 		loopFlaw["remaining"] = rem
 

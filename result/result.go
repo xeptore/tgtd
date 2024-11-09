@@ -5,7 +5,7 @@ type Of[T any] struct {
 	err error
 }
 
-func (r Of[T]) V() *T {
+func (r Of[T]) Unwrap() *T {
 	if r.err != nil {
 		panic("cannot get value of error result")
 	}

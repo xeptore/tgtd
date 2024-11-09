@@ -9,10 +9,17 @@ import (
 	"github.com/xeptore/flaw/v8"
 )
 
-func FlawError(err error) func(e *zerolog.Event) {
+func Flaw(err error) func(e *zerolog.Event) {
 	return func(e *zerolog.Event) {
 		if flawErr := new(flaw.Flaw); errors.As(err, &flawErr) {
-			e.Str("inner_error", flawErr.Inner)
+			e.Dict(
+				"error",
+				zerolog.
+					Dict().
+					Str("message", flawErr.Inner).
+					Str("type_name", flawErr.InnerType).
+					Str("syntax_representation", flawErr.InnerSyntaxRepr),
+			)
 
 			records := zerolog.Arr()
 			for _, v := range flawErr.Records {
@@ -28,7 +35,14 @@ func FlawError(err error) func(e *zerolog.Event) {
 			for _, v := range flawErr.JoinedErrors {
 				d := zerolog.
 					Dict().
-					Str("message", v.Message)
+					Dict(
+						"error",
+						zerolog.
+							Dict().
+							Str("message", v.Message).
+							Str("type_name", v.TypeName).
+							Str("syntax_representation", v.SyntaxRepr),
+					)
 				if st := v.CallerStackTrace; nil != st {
 					d.Dict(
 						"caller_stack_trace",

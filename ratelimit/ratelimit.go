@@ -16,7 +16,6 @@ func TrackDownloadSleepMS() time.Duration {
 		from = 1
 		to   = 5
 	)
-
-	millis := (rand.IntN(to-from)+from)*1000 + rand.N(1000)
+	millis := (rand.IntN(to-from)+from)*1000 + rand.N(1000) //nolint:gosec
 	return time.Duration(millis) * time.Millisecond
 }

@@ -30,20 +30,14 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 		return err
 	}
 
-	wg, ctx := errgroup.WithContext(ctx)
-	wg.SetLimit(ratelimit.PlaylistDownloadConcurrency)
-
 	if err := d.preparePlaylistDir(id, tracks); nil != err {
 		return err
 	}
 
+	wg, ctx := errgroup.WithContext(ctx)
+	wg.SetLimit(ratelimit.PlaylistDownloadConcurrency)
 	for _, track := range tracks {
-		wg.Go(func() error {
-			if err := d.download(ctx, &track); nil != err {
-				return err
-			}
-			return nil
-		})
+		wg.Go(func() error { return d.download(ctx, &track) })
 	}
 
 	if err := wg.Wait(); nil != err {
@@ -199,31 +193,48 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 
 	response, err := d.getPagedItems(ctx, playlistURL, page)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, 0, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, 0, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, 0, context.DeadlineExceeded
+		case errors.Is(err, auth.ErrUnauthorized):
+			return nil, 0, auth.ErrUnauthorized
+		case errutil.IsFlaw(err):
+			return nil, 0, must.BeFlaw(err).Append(flawP)
+		default:
+			panic(errutil.UnknownError(err))
 		}
-		return nil, 0, must.BeFlaw(err).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get playlist page items response body: %v", closeErr)).Append(flawP)
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	var responseBody PlaylistResponse
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, 0, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, 0, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, 0, context.DeadlineExceeded
+		default:
+			return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 		}
-		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 	}
 	thisPageItems := len(responseBody.Items)
 	if thisPageItems == 0 {
@@ -264,13 +275,20 @@ func (d *Downloader) playlistTracks(ctx context.Context, id string) ([]PlaylistT
 		flawP["loop_flaw_payloads"] = loopFlawPs
 		pageTracks, rem, err := d.playlistTracksPage(ctx, id, i)
 		if nil != err {
-			if errors.Is(err, os.ErrNotExist) {
+			switch {
+			case errutil.IsContext(ctx):
+				return nil, ctx.Err()
+			case errors.Is(err, os.ErrNotExist):
 				break
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			case errors.Is(err, auth.ErrUnauthorized):
+				return nil, auth.ErrUnauthorized
+			case errutil.IsFlaw(err):
+				return nil, must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
-			}
-			return nil, must.BeFlaw(err).Append(flawP)
 		}
 		flawP["remaining"] = rem
 

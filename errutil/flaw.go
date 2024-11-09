@@ -2,6 +2,7 @@ package errutil
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -94,4 +95,11 @@ func FlawToTOML(f *flaw.Flaw) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func IsFlaw(err error) bool {
+	if flawErr := new(flaw.Flaw); errors.As(err, &flawErr) {
+		return true
+	}
+	return false
 }
