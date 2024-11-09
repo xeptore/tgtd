@@ -7,6 +7,7 @@ import (
 )
 
 func Test_TrackDownloadSleepMS(t *testing.T) {
+	t.Parallel()
 	for range 100 {
 		ms := ratelimit.TrackDownloadSleepMS().Milliseconds()
 		if ms < 2000 || ms > 6000 {

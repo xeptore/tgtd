@@ -14,13 +14,13 @@ import (
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/tg"
 	"github.com/xeptore/flaw/v8"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/sliceutil"
 	"github.com/xeptore/tgtd/tidl"
 	"github.com/xeptore/tgtd/tidl/must"
-	"golang.org/x/sync/errgroup"
 )
 
 func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
