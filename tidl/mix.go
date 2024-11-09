@@ -2,6 +2,7 @@ package tidl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,7 +29,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 		return err
 	}
 
-	if err := d.prepareMixDir(ctx, id, tracks); nil != err {
+	if err := d.prepareMixDir(id, tracks); nil != err {
 		return err
 	}
 
@@ -45,7 +46,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 	return nil
 }
 
-func (d *Downloader) prepareMixDir(ctx context.Context, id string, tracks []MixTrack) error {
+func (d *Downloader) prepareMixDir(id string, tracks []MixTrack) error {
 	mixDir := path.Join(d.basePath, mixTrackDir(id))
 	if err := os.RemoveAll(mixDir); nil != err {
 		return flaw.From(fmt.Errorf("failed to delete possibly existing mix directory: %v", err))
@@ -59,10 +60,7 @@ func (d *Downloader) prepareMixDir(ctx context.Context, id string, tracks []MixT
 	if nil != err {
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
 	}
-	if err := json.NewEncoder(f).EncodeContext(ctx, tracks); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return err
-		}
+	if err := json.NewEncoder(f).Encode(tracks); nil != err {
 		return flaw.From(fmt.Errorf("failed to encode mix info: %v", err)).Append(flawP)
 	}
 	if err := f.Close(); nil != err {
@@ -123,21 +121,34 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 
 	response, err := d.getPagedItems(ctx, mixURL, page)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, 0, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, 0, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, 0, context.DeadlineExceeded
+		case errors.Is(err, auth.ErrUnauthorized):
+			return nil, 0, auth.ErrUnauthorized
+		case errutil.IsFlaw(err):
+			return nil, 0, must.BeFlaw(err).Append(flawP)
+		default:
+			panic(errutil.UnknownError(err))
 		}
-		return nil, 0, must.BeFlaw(err).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get mix page items response body: %v", closeErr)).Append(flawP)
-			if nil != err {
-				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -163,10 +174,14 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, 0, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, 0, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, 0, context.DeadlineExceeded
+		default:
+			return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 		}
-		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 	}
 	thisPageItems := len(responseBody.Items)
 	if thisPageItems == 0 {
@@ -196,15 +211,26 @@ func (d *Downloader) mixTracks(ctx context.Context, id string) ([]MixTrack, erro
 	var tracks []MixTrack
 	var loopFlawPs []flaw.P
 	flawP := flaw.P{"loop_flaw_payloads": loopFlawPs}
+
 	for i := 0; ; i++ {
 		loopFlawP := flaw.P{"page": i}
 		loopFlawPs = append(loopFlawPs, loopFlawP)
 		pageTracks, rem, err := d.mixTracksPage(ctx, id, i)
 		if nil != err {
-			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
+			switch {
+			case errutil.IsContext(ctx):
+				return nil, ctx.Err()
+			case errors.Is(err, os.ErrNotExist):
+				break
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			case errors.Is(err, auth.ErrUnauthorized):
+				return nil, auth.ErrUnauthorized
+			case errutil.IsFlaw(err):
+				return nil, must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			return nil, must.BeFlaw(err).Append(flawP)
 		}
 		tracks = append(tracks, pageTracks...)
 

@@ -25,11 +25,11 @@ type TrackStream interface {
 
 func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err error) {
 	trackURL := fmt.Sprintf(trackStreamAPIFormat, id)
+	flawP := flaw.P{"url": trackURL}
 	reqURL, err := url.Parse(trackURL)
 	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to parse track URL to build track stream URLs: %v", err))
+		return nil, flaw.From(fmt.Errorf("failed to parse track URL to build track stream URLs: %v", err)).Append(flawP)
 	}
-	flawP := flaw.P{"url": trackURL}
 	params := make(url.Values, 4)
 	params.Add("countryCode", "US")
 	params.Add("audioquality", "HI_RES_LOSSLESS")
@@ -39,8 +39,8 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	flawP["encoded_query_params"] = reqURL.RawQuery
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to create get track stream URLs request: %v", err)).Append(flawP)
 	}
@@ -49,21 +49,30 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to send get track stream URLs request: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to send get track stream URLs request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get track stream URLs response body: %v", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, auth.ErrUnauthorized):
+				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -81,8 +90,8 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		Manifest         string `json:"manifest"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 	}
@@ -105,10 +114,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 			URLs           []string `json:"urls"`
 		}
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(responseBody.Manifest))
-		if err := json.NewDecoder(dec).DecodeContext(ctx, &manifest); nil != err {
-			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
-			}
+		if err := json.NewDecoder(dec).Decode(&manifest); nil != err {
 			return nil, flaw.From(fmt.Errorf("failed to decode vnd.tidal.bt manifest: %v", err)).Append(flawP)
 		}
 		flawP["manifest"] = flaw.P{

@@ -2,6 +2,7 @@ package tidl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,7 +46,7 @@ func NewDownloader(auth *auth.Auth, basePath string, logger zerolog.Logger) *Dow
 }
 
 func (d *Downloader) download(ctx context.Context, t Track) error {
-	if err := d.writeInfo(ctx, t); nil != err {
+	if err := d.writeInfo(t); nil != err {
 		return err
 	}
 
@@ -65,18 +66,27 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 	flawP["wait_time"] = waitTime
 	d.logger.Debug().Dur("wait_time", waitTime).Msg("Waiting to prevent rate limit error before starting track download")
 	time.Sleep(waitTime)
+	d.logger.Debug().Msg("Starting track download")
 
 	if err := stream.saveTo(ctx, fileName); nil != err {
-		if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
-			return err
+		switch {
+		case errutil.IsContext(ctx):
+			return ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return context.DeadlineExceeded
+		case errors.Is(err, auth.ErrUnauthorized):
+			return auth.ErrUnauthorized
+		case errutil.IsFlaw(err):
+			return must.BeFlaw(err).Append(flawP)
+		default:
+			panic(errutil.UnknownError(err))
 		}
-		return must.BeFlaw(err).Append(flawP)
 	}
 
 	return nil
 }
 
-func (d *Downloader) writeInfo(ctx context.Context, t Track) (err error) {
+func (d *Downloader) writeInfo(t Track) (err error) {
 	f, err := os.OpenFile(
 		path.Join(d.basePath, t.FileName()+".json"),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
@@ -88,20 +98,18 @@ func (d *Downloader) writeInfo(ctx context.Context, t Track) (err error) {
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 
-	if err := json.NewEncoder(f).EncodeContext(ctx, t.info()); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return err
-		}
+	if err := json.NewEncoder(f).Encode(t.info()); nil != err {
 		return flaw.From(fmt.Errorf("failed to write track info: %v", err))
 	}
 
@@ -120,8 +128,8 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	flawP := flaw.P{"cover_url": coverURL}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return err
+		if errutil.IsContext(ctx) {
+			return ctx.Err()
 		}
 		return flaw.From(fmt.Errorf("failed to create get cover request: %v", err)).Append(flawP)
 	}
@@ -130,21 +138,32 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return err
+		switch {
+		case errutil.IsContext(ctx):
+			return ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return context.DeadlineExceeded
+		default:
+			return flaw.From(fmt.Errorf("failed to send get cover request: %v", err)).Append(flawP)
 		}
-		return flaw.From(fmt.Errorf("failed to send get cover request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close get cover response body: %v", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context has ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, auth.ErrUnauthorized):
+				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -176,13 +195,18 @@ func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close track cover file: %v", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, context.Canceled):
+				err = flaw.From(errors.New("context has been canceled")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			err = closeErr
 		}
 	}()
 
@@ -213,8 +237,8 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	flawP := flaw.P{"encoded_query_params": reqURL.RawQuery}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}
@@ -223,10 +247,14 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	client := http.Client{Timeout: 5 * time.Minute} // TODO: set it to a reasonable value
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 	}
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 

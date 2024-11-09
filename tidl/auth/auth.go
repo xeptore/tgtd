@@ -40,7 +40,6 @@ type Auth struct {
 	Creds Credentials
 }
 
-// Load returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func Load(ctx context.Context) (*Auth, error) {
 	creds, err := load(ctx)
 	if nil != err {
@@ -63,7 +62,6 @@ func (f File) flawP() flaw.P {
 	}
 }
 
-// load returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func load(ctx context.Context) (creds *Credentials, err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_RDONLY, 0o0644)
 	if nil != err {
@@ -75,17 +73,24 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close token file: %v", closeErr))
-			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
+			switch {
+			case nil == err:
 				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrUnauthorized):
+				err = flaw.From(errors.New("received unauthorized error")).Join(closeErr)
+			default:
+				err = must.BeFlaw(err).Join(closeErr)
 			}
 		}
 	}()
 	var content File
 	if err := json.NewDecoder(f).DecodeContext(ctx, &content); nil != err {
-		if errors.Is(err, context.Canceled) {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err))
 	}
@@ -93,8 +98,8 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 		return handleUnauthorized(ctx, content.RefreshToken)
 	}
 	if err := verifyAccessToken(ctx, content.AccessToken); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled, context.DeadlineExceeded); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		if errors.Is(err, ErrUnauthorized) {
 			return handleUnauthorized(ctx, content.RefreshToken)
@@ -104,13 +109,9 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 	return ptr.Of(Credentials(content)), nil
 }
 
-// handleUnauthorized returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func handleUnauthorized(ctx context.Context, rt string) (*Credentials, error) {
 	refreshResult, err := refreshToken(ctx, rt)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, ErrUnauthorized, context.Canceled, context.DeadlineExceeded); ok {
-			return nil, err
-		}
 		return nil, err
 	}
 	newFileContent := File{
@@ -124,7 +125,6 @@ func handleUnauthorized(ctx context.Context, rt string) (*Credentials, error) {
 	return ptr.Of(Credentials(newFileContent)), nil
 }
 
-// save returns flaw.Flaw as error if fails.
 func save(content File) (err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
 	if nil != err {
@@ -152,7 +152,6 @@ type RefreshTokenResult struct {
 	ExpiresAt   int64
 }
 
-// refreshToken returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenResult, err error) {
 	requestURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
@@ -168,8 +167,8 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	flawP["request_body_params"] = requestBodyParamsStr
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParamsStr))
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
 		}
 		return nil, flaw.From(fmt.Errorf("failed to create refresh token request: %v", err)).Append(flawP)
 	}
@@ -179,21 +178,30 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to issue refresh token request: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to issue refresh token request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr).Append(flawP)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrUnauthorized):
+				err = flaw.From(errors.New("received unauthorized error")).Join(closeErr)
+			default:
+				err = must.BeFlaw(err).Join(closeErr)
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -208,10 +216,14 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 			ErrorDescription string `json:"error_description"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
+			switch {
+			case errutil.IsContext(ctx):
+				return nil, ctx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			default:
+				return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 			}
-			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 400 && responseBody.SubStatus == 11101 && responseBody.Error == "invalid_grant" && responseBody.ErrorDescription == "Token could not be verified" {
 			return nil, ErrUnauthorized
@@ -225,10 +237,14 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 	}
 	expiresAt, err := extractExpiresAt(responseBody.AccessToken)
 	if nil != err {
@@ -241,7 +257,6 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	}, nil
 }
 
-// extractExpiresAt returns either [flaw.Flaw], [context.Canceled], or [context.DeadlineExceeded] errors if fails.
 func extractExpiresAt(accessToken string) (int64, error) {
 	splits := strings.SplitN(accessToken, ".", 3)
 	if len(splits) != 3 {
@@ -251,23 +266,21 @@ func extractExpiresAt(accessToken string) (int64, error) {
 		ExpiresAt int64 `json:"exp"`
 	}
 	if err := json.NewDecoder(base64.NewDecoder(base64.StdEncoding, strings.NewReader(splits[1]))).Decode(&obj); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return 0, err
-		}
 		return 0, flaw.From(fmt.Errorf("failed to decode access token payload: %v", err))
 	}
 	return obj.ExpiresAt, nil
 }
 
-// VerifyAccessToken returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails if fails.
 func (a *Auth) VerifyAccessToken(ctx context.Context) error {
 	return verifyAccessToken(ctx, a.Creds.AccessToken)
 }
 
-// verifyAccessToken returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails if fails.
 func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.tidal.com/v1/sessions", nil)
 	if nil != err {
+		if errutil.IsContext(ctx) {
+			return ctx.Err()
+		}
 		return flaw.From(fmt.Errorf("failed to create verify access token request: %w", err))
 	}
 	request.Header.Add("Authorization", "Bearer "+accessToken)
@@ -275,21 +288,30 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return err
+		switch {
+		case errutil.IsContext(ctx):
+			return ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return context.DeadlineExceeded
+		default:
+			return flaw.From(fmt.Errorf("failed to issue verify access token request: %w", err))
 		}
-		return flaw.From(fmt.Errorf("failed to issue verify access token request: %w", err))
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close response body: %w", closeErr))
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context has ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrUnauthorized):
+				err = flaw.From(errors.New("received unauthorized error")).Join(closeErr)
+			default:
+				err = must.BeFlaw(err).Join(closeErr)
 			}
-			err = closeErr
 		}
 	}()
 	flawP := flaw.P{"response": errutil.HTTPResponseFlawPayload(response)}
@@ -304,10 +326,14 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 			UserMessage string `json:"userMessage"`
 		}
 		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-				return err
+			switch {
+			case errutil.IsContext(ctx):
+				return ctx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return context.DeadlineExceeded
+			default:
+				return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %w", err)).Append(flawP)
 			}
-			return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return ErrUnauthorized
@@ -327,7 +353,6 @@ type authorizationResponse struct {
 
 var ErrAuthWaitTimeout = errors.New("authorization wait timeout")
 
-// NewAuthorizer returns either [flaw.Flaw], [context.Canceled], or [context.DeadlineExceeded] errors if fails.
 func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth], err error) {
 	res, err := issueAuthorizationRequest(ctx)
 	if nil != err {
@@ -346,34 +371,31 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth
 		for {
 			select {
 			case <-ctx.Done():
-				err := ctx.Err()
-				if errors.Is(err, context.DeadlineExceeded) {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					done <- result.Err[Auth](ErrAuthWaitTimeout)
 					return
 				}
-				err = flaw.From(fmt.Errorf("authorization wait context errored with unknown error: %v", err))
-				done <- result.Err[Auth](err)
+				done <- result.Err[Auth](flaw.From(fmt.Errorf("authorization wait context errored with unknown error: %v", err)))
 				return
 			case <-ticker.C:
 				creds, err := res.poll(ctx)
 				if nil != err {
-					if errors.Is(err, ErrUnauthorized) {
-						continue waitloop
-					}
-					if errors.Is(err, context.Canceled) {
+					switch {
+					case errors.Is(ctx.Err(), context.DeadlineExceeded):
+						// Nothing, as polled had a chance to poll the API for one last time.
+					case errors.Is(ctx.Err(), context.Canceled):
 						done <- result.Err[Auth](context.Canceled)
 						return
+					case errors.Is(err, context.Canceled):
+						panic("Unexpected poller context cancellation when an error is already returned from it")
+					case errors.Is(err, context.DeadlineExceeded):
+						// The poller has timed out, not the auth-wait context
+						done <- result.Err[Auth](flaw.From(errors.New("failed to poll authorization status due to timeout")))
+					case errors.Is(err, ErrUnauthorized):
+						continue waitloop
+					default:
+						done <- result.Err[Auth](err)
 					}
-					if errors.Is(err, context.DeadlineExceeded) {
-						if ctx.Err() == nil {
-							// The poller has timed out, not the auth-wait context
-							continue waitloop
-						}
-						done <- result.Err[Auth](ErrAuthWaitTimeout)
-						return
-					}
-					done <- result.Err[Auth](err)
-					return
 				}
 				f := File(*creds)
 				flawP := flaw.P{"creds": f.flawP()}
@@ -390,7 +412,6 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth
 	return res.URL, done, nil
 }
 
-// issueAuthorizationRequest returns either [flaw.Flaw], [context.Canceled], or [context.DeadlineExceeded] errors if fails.
 func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse, err error) {
 	requestURL, err := url.JoinPath(baseURL, "/device_authorization")
 	if nil != err {
@@ -404,6 +425,9 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	flawP["request_body_params"] = requestBodyParamsStr
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParamsStr))
 	if nil != err {
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
+		}
 		return nil, flaw.From(fmt.Errorf("failed to create device authorization request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
@@ -411,21 +435,28 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to issue device authorization request: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to issue authorization request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr)).Append(flawP)
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr).Append(flawP)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			default:
+				err = must.BeFlaw(err).Join(closeErr)
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -442,12 +473,16 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 		Interval        int    `json:"interval"`
 	}
 	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to decode response body: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to decode response body: %v", err)).Append(flawP)
 	}
-	flawP["responseBody"] = flaw.P{
+	flawP["response_body"] = flaw.P{
 		"device_code":      responseBody.DeviceCode,
 		"user_code":        responseBody.UserCode,
 		"verification_uri": responseBody.VerificationURI,
@@ -471,11 +506,29 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	}, nil
 }
 
-// poll returns either [flaw.Flaw], [context.Canceled], [context.DeadlineExceeded], or [ErrUnauthorized] errors if fails.
 func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, err error) {
-	// cloning the context to be able to differentiate between parent context's deadline and the internal HTTP request's by the caller
-	ctx, cancel := context.WithCancel(ctx)
+	// Create a detached context which is only canceled when parent context is canceled, not when it's deadline exceeded.
+	pollCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() {
+		select {
+		case <-ctx.Done():
+			err := ctx.Err()
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				// Ignore
+			case errors.Is(err, context.Canceled):
+				cancel()
+				return
+			default:
+				panic("unexpected error value for ended parent context:" + err.Error())
+			}
+		case <-pollCtx.Done():
+			// When outer function returns
+			return
+		}
+	}()
+
 	requestURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
 		return nil, flaw.From(fmt.Errorf("failed to create token URL: %w", err))
@@ -488,8 +541,11 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 	requestBodyParams.Add("device_code", r.DeviceCode)
 	requestBodyStr := requestBodyParams.Encode()
 	flawP["request_body_str"] = requestBodyStr
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyStr))
+	request, err := http.NewRequestWithContext(pollCtx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyStr))
 	if nil != err {
+		if errutil.IsContext(pollCtx) {
+			return nil, pollCtx.Err()
+		}
 		return nil, flaw.From(fmt.Errorf("failed to create token request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
@@ -498,21 +554,30 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
 	response, err := client.Do(request)
 	if nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+		switch {
+		case errutil.IsContext(pollCtx):
+			return nil, pollCtx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to issue token request: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to issue token request: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr)).Append(flawP)
-			if nil != err {
-				if _, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); !ok {
-					err = must.BeFlaw(err).Join(closeErr).Append(flawP)
-					return
-				}
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(pollCtx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrUnauthorized):
+				err = flaw.From(errors.New("received unauthorized error")).Join(closeErr)
+			default:
+				err = must.BeFlaw(err).Join(closeErr)
 			}
-			err = closeErr
 		}
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
@@ -526,11 +591,15 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 			SubStatus        int    `json:"sub_status"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-			if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-				return nil, err
+		if err := json.NewDecoder(response.Body).DecodeContext(pollCtx, &responseBody); nil != err {
+			switch {
+			case errutil.IsContext(pollCtx):
+				return nil, pollCtx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			default:
+				return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 			}
-			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 400 && responseBody.Error == "authorization_pending" && responseBody.SubStatus == 1002 && responseBody.ErrorDescription == "Device Authorization code is not authorized yet" {
 			return nil, ErrUnauthorized
@@ -544,11 +613,15 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return nil, err
+	if err := json.NewDecoder(response.Body).DecodeContext(pollCtx, &responseBody); nil != err {
+		switch {
+		case errors.Is(pollCtx.Err(), context.Canceled):
+			return nil, pollCtx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 		}
-		return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 	}
 	expiresAt, err := extractExpiresAt(responseBody.AccessToken)
 	if nil != err {

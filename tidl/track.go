@@ -8,7 +8,6 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/xeptore/flaw/v8"
 
-	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/tidl/must"
 )
@@ -55,7 +54,7 @@ func (d *Downloader) Track(ctx context.Context, id string) error {
 	return nil
 }
 
-func ReadTrackInfoFile(ctx context.Context, fileName string) (info *TrackInfo, err error) {
+func ReadTrackInfoFile(fileName string) (info *TrackInfo, err error) {
 	file, err := os.Open(fileName + ".json")
 	if nil != err {
 		return nil, flaw.From(fmt.Errorf("failed to open track info file: %v", err))
@@ -72,10 +71,7 @@ func ReadTrackInfoFile(ctx context.Context, fileName string) (info *TrackInfo, e
 	}()
 
 	var trackInfo TrackInfo
-	if err := json.NewDecoder(file).DecodeContext(ctx, &trackInfo); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
-		}
+	if err := json.NewDecoder(file).Decode(&trackInfo); nil != err {
 		return nil, flaw.From(fmt.Errorf("failed to decode track info file: %v", err))
 	}
 	return &trackInfo, nil

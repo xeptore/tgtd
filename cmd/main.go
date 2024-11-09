@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/goccy/go-json"
 	"github.com/gotd/contrib/bg"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
@@ -31,14 +29,11 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
 	"github.com/xeptore/flaw/v8"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/constant"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/log"
-	"github.com/xeptore/tgtd/mathutil"
-	"github.com/xeptore/tgtd/sliceutil"
 	"github.com/xeptore/tgtd/tidl"
 	"github.com/xeptore/tgtd/tidl/auth"
 	"github.com/xeptore/tgtd/tidl/must"
@@ -90,7 +85,11 @@ func main() {
 			logger.Trace().Msg("Application was canceled")
 			return
 		}
-		logger.Fatal().Func(log.FlawError(err)).Msg("Application exited with error")
+		if flawErr := new(flaw.Flaw); errors.As(err, &flawErr) {
+			logger.Fatal().Func(log.Flaw(flawErr)).Msg("Application exited with flaw")
+			return
+		}
+		logger.Fatal().Err(err).Msg("Application exited with error")
 	}
 }
 
@@ -105,28 +104,28 @@ func run(cliCtx *cli.Context) (err error) {
 	cfgFilePath := cliCtx.String(flagConfigFilePath)
 	switch {
 	case cfgFilePath != "" && cfgEnv != "":
-		return flaw.From(errors.New("config file path and config environment variable are both set. specify only one"))
+		return errors.New("config file path and config environment variable are both set. specify only one")
 	case cfgFilePath == "" && cfgEnv == "":
-		return flaw.From(errors.New("config file path and config environment variable are both empty. specify one"))
+		return errors.New("config file path and config environment variable are both empty. specify one")
 	case cfgFilePath != "":
 		logger.Debug().Str("config_file_path", cfgFilePath).Msg("Loading config from file")
 		c, err := config.FromFile(cfgFilePath)
 		if nil != err {
-			return flaw.From(fmt.Errorf("failed to load config file: %v", err))
+			return fmt.Errorf("failed to load config file: %v", err)
 		}
 		cfg = c
 	default:
 		logger.Debug().Msg("Loading config from environment variable")
 		c, err := config.FromString(cfgEnv)
 		if nil != err {
-			return flaw.From(fmt.Errorf("failed to load config from environment variable: %v", err))
+			return fmt.Errorf("failed to load config from environment variable: %v", err)
 		}
 		cfg = c
 	}
 
 	appID, err := strconv.Atoi(os.Getenv("APP_ID"))
 	if nil != err {
-		return flaw.From(errors.New("failed to parse APP_ID environment variable to integer"))
+		return errors.New("failed to parse APP_ID environment variable to integer")
 	}
 
 	w := &Worker{
@@ -163,7 +162,7 @@ func run(cliCtx *cli.Context) (err error) {
 
 	stop, err := bg.Connect(client)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to connect to telegram: %v", err))
+		return fmt.Errorf("failed to connect to telegram: %v", err)
 	}
 	logger.Debug().Msg("Telegram client connected.")
 	defer func() {
@@ -176,11 +175,14 @@ func run(cliCtx *cli.Context) (err error) {
 
 	status, err := client.Auth().Status(ctx)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to get Telegram client auth status: %v", err))
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return context.Canceled
+		}
+		return fmt.Errorf("failed to get Telegram client auth status: %v", err)
 	}
 	if !status.Authorized {
 		if _, authErr := client.Auth().Bot(ctx, botToken); nil != authErr {
-			if errors.Is(authErr, context.Canceled) {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
 			}
 			return fmt.Errorf("failed to authorize Telegram bot: %v", authErr)
@@ -197,24 +199,30 @@ func run(cliCtx *cli.Context) (err error) {
 	tidlAuth, err := auth.Load(ctx)
 	if nil != err {
 		switch {
-		case errors.Is(err, context.Canceled):
+		case errors.Is(ctx.Err(), context.Canceled):
 			return context.Canceled
 		case errors.Is(err, context.DeadlineExceeded):
-			return flaw.From(fmt.Errorf("failed to load TIDAL auth due to deadline exceeded: %v", err))
-		case !errors.Is(err, auth.ErrUnauthorized):
-			return must.BeFlaw(err)
+			return fmt.Errorf("failed to load TIDAL auth due to deadline exceeded: %v", err)
+		case errors.Is(err, auth.ErrUnauthorized):
+			// continue as we're gonna kick off the authorization flow
+		case errutil.IsFlaw(err):
+			return err
+		default:
+			panic(errutil.UnknownError(err))
 		}
 
-		logger.Debug().Msg("Initiating TIDAL authorization flow")
+		logger.Debug().Msg("Need to authenticate TIDAL. Initiating TIDAL authorization flow")
 		link, wait, err := auth.NewAuthorizer(ctx)
 		if nil != err {
 			switch {
-			case errors.Is(err, context.Canceled):
+			case errors.Is(ctx.Err(), context.Canceled):
 				return context.Canceled
 			case errors.Is(err, context.DeadlineExceeded):
-				return flaw.From(fmt.Errorf("failed to initialize TIDAL authorizer due to deadline exceeded: %v", err))
+				return fmt.Errorf("failed to initialize TIDAL authorizer due to deadline exceeded: %v", err)
+			case errutil.IsFlaw(err):
+				return err
 			default:
-				return must.BeFlaw(err).Append(flaw.P{"module": "auth"})
+				panic(errutil.UnknownError(err))
 			}
 		}
 
@@ -224,91 +232,79 @@ func run(cliCtx *cli.Context) (err error) {
 			styling.Plain("\n"),
 			styling.URL(link),
 			styling.Plain("\n"),
-			styling.Plain("\n"),
 			styling.Italic("Waiting for authentication..."),
 		)
 		if nil != err {
-			if errors.Is(err, context.Canceled) {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
 			}
-			return flaw.From(fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err))
+			return fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err)
 		}
 
 		logger.Info().Msg("Waiting for TIDAL authentication")
 		res := <-wait
 		if err := res.Err(); nil != err {
 			switch {
-			case errors.Is(err, context.Canceled):
+			case errors.Is(ctx.Err(), context.Canceled):
 				return context.Canceled
-			case errors.Is(err, context.DeadlineExceeded):
-				_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
-					ctx,
-					styling.Plain("Issuing authorization request took too much time."),
-					styling.Plain("\n"),
-					styling.Plain("Restart the bot to initiate the authorization flow again."),
-				)
-				if nil != err {
-					if errors.Is(err, context.Canceled) {
-						return context.Canceled
-					}
-					return flaw.From(fmt.Errorf("failed to send TIDAL authorization timeout message to specified target chat: %v", err))
-				}
-				return flaw.From(errors.New("TIDAL authorization flow timed out"))
 			case errors.Is(err, auth.ErrAuthWaitTimeout):
 				_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
 					ctx,
 					styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again."),
 				)
 				if nil != err {
-					if errors.Is(err, context.Canceled) {
+					if errors.Is(ctx.Err(), context.Canceled) {
 						return context.Canceled
 					}
-					return flaw.From(fmt.Errorf("failed to send TIDAL authentication URL expired message to specified target chat: %v", err))
+					return fmt.Errorf("failed to send TIDAL authentication URL expired message to specified target chat: %v", err)
 				}
-				return flaw.From(errors.New("TIDAL authorization URL expired"))
-			default:
-				logger.Error().Func(log.FlawError(err)).Msg("TIDAL authentication failed")
-				_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
-					ctx,
+				return errors.New("TIDAL authorization URL expired")
+			case errutil.IsFlaw(err):
+				logger.Error().Func(log.Flaw(err)).Msg("TIDAL authentication failed")
+				lines := []styling.StyledTextOption{
 					styling.Plain("TIDAL authentication failed:"),
 					styling.Plain("\n"),
 					styling.Code(err.Error()),
 					styling.Plain("\n"),
 					styling.Plain("Restart the bot to initiate the authorization flow again."),
-				)
-				if nil != err {
-					if errors.Is(err, context.Canceled) {
+				}
+				if _, err := w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, lines...); nil != err {
+					if errors.Is(ctx.Err(), context.Canceled) {
 						return context.Canceled
 					}
-					return flaw.From(fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err))
+					return fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err)
 				}
 				return err
+			default:
+				panic(errutil.UnknownError(err))
 			}
 		}
 
 		logger.Info().Msg("TIDAL authentication was successful")
-		_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, styling.Bold("TIDAL authentication was successful!"))
-		if nil != err {
-			if errors.Is(err, context.Canceled) {
+		if _, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
 			}
-			return flaw.From(fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err))
+			return fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err)
 		}
-		tidlAuth = res.V()
+		tidlAuth = res.Unwrap()
 	}
 
 	if err := tidlAuth.VerifyAccessToken(ctx); nil != err {
 		switch {
-		case errors.Is(err, context.Canceled):
-			return err
+		case errors.Is(ctx.Err(), context.Canceled):
+			return context.Canceled
 		case errors.Is(err, context.DeadlineExceeded):
 			return fmt.Errorf("failed to verify TIDAL access token due to deadline exceeded: %v", err)
 		case errors.Is(err, auth.ErrUnauthorized):
-			return flaw.From(errors.New("TIDAL authentication expired. Please reauthorize the application"))
+			return errors.New("TIDAL authentication expired. Please reauthorize the application")
+		case errutil.IsFlaw(err):
+			return err
 		default:
-			return must.BeFlaw(err).Append(flaw.P{"module": "auth"})
+			panic(errutil.UnknownError(err))
 		}
 	}
+
 	logger.Debug().Msg("TIDAL access token verified")
 	w.tidlAuth = tidlAuth
 	d.OnNewMessage(buildOnMessage(w))
@@ -333,10 +329,10 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 
 		if msg == "/start" {
 			if _, err := reply.Text(ctx, "Hello!"); nil != err {
-				if errors.Is(err, context.Canceled) {
+				if errors.Is(ctx.Err(), context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 			}
 			return nil
 		}
@@ -345,12 +341,15 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 			link, wait, err := auth.NewAuthorizer(ctx)
 			if nil != err {
 				switch {
-				case errors.Is(err, context.Canceled):
+				case errors.Is(ctx.Err(), context.Canceled):
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
 					if _, err := reply.StyledText(ctx, styling.Plain("Authorizer initialization canceled")); nil != err {
-						if errors.Is(err, context.Canceled) {
+						if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -360,25 +359,27 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						styling.Plain("\n"),
 						styling.Plain("Execute the command again with a delay."),
 					}
-					w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("TIDAL authorizer initialization timed out")
+					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("TIDAL authorizer initialization timed out")
 					if _, err := reply.StyledText(ctx, lines...); nil != err {
-						if errors.Is(err, context.Canceled) {
+						if errors.Is(ctx.Err(), context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						return nil
+					}
+					return nil
+				case errutil.IsFlaw(err):
+					w.logger.Error().Func(log.Flaw(err)).Msg("Failed to initialize authorizer due to unknown reason")
+					if _, err := reply.StyledText(ctx, styling.Plain("Failed to initialize authorizer due to unknown reason")); nil != err {
+						if errors.Is(ctx.Err(), context.Canceled) {
+							return nil
+						}
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
 				default:
-					w.logger.Error().Func(log.FlawError(err)).Msg("Failed to initialize authorizer due to unknown reason")
-					if _, err := reply.StyledText(ctx, styling.Plain("Failed to initialize authorizer due to unknown reason")); nil != err {
-						if errors.Is(err, context.Canceled) {
-							return nil
-						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
-						return nil
-					}
-					return nil
+					panic(errutil.UnknownError(err))
 				}
 			}
 
@@ -386,23 +387,28 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
 				styling.URL(link),
+				styling.Italic("Waiting for authentication..."),
 			}
 			if _, err := reply.StyledText(ctx, lines...); nil != err {
-				if errors.Is(err, context.Canceled) {
+				if errors.Is(ctx.Err(), context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 				return nil
 			}
+
 			res := <-wait
 			if err := res.Err(); nil != err {
 				switch {
-				case errors.Is(err, context.Canceled):
+				case errors.Is(ctx.Err(), context.Canceled):
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
 					if _, err := reply.StyledText(ctx, styling.Plain("Operation canceled while was waiting for authorization.")); nil != err {
-						if errors.Is(err, context.Canceled) {
+						if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(err)).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(err)).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -411,12 +417,12 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
-				default:
-					w.logger.Error().Func(log.FlawError(err)).Msg("TIDAL authentication has failed")
+				case errutil.IsFlaw(err):
+					w.logger.Error().Func(log.Flaw(err)).Msg("TIDAL authentication has failed")
 					lines := []styling.StyledTextOption{
 						styling.Plain("TIDAL authentication has failed due to unknown reason:"),
 						styling.Plain("\n"),
@@ -426,19 +432,22 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
+				default:
+					panic(errutil.UnknownError(err))
 				}
 			}
 
-			w.tidlAuth = res.V()
+			w.tidlAuth = res.Unwrap()
+
 			if _, err := reply.StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 				return nil
 			}
 			return nil
@@ -459,7 +468,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 							if errors.Is(err, context.Canceled) {
 								return nil
 							}
-							w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 							return nil
 						}
 						return nil
@@ -470,7 +479,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -479,7 +488,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -495,7 +504,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -512,21 +521,21 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
 				}
 
-				w.logger.Error().Func(log.FlawError(err)).Msg("Failed to run job")
+				w.logger.Error().Func(log.Flaw(err)).Msg("Failed to run job")
 				flawBytes, err := errutil.FlawToTOML(must.BeFlaw(err))
 				if nil != err {
-					w.logger.Error().Func(log.FlawError(err)).Msg("Failed to convert flaw to TOML")
+					w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
 					return nil
 				}
 				upload, err := w.uploader.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
 				if nil != err {
-					w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to upload flaw to TOML")
+					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to upload flaw to TOML")
 					return nil
 				}
 				document := message.UploadedDocument(upload)
@@ -544,7 +553,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					if errors.Is(err, context.Canceled) {
 						return nil
 					}
-					w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 					return nil
 				}
 				return nil
@@ -563,7 +572,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					if errors.Is(err, context.Canceled) {
 						return nil
 					}
-					w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 					return nil
 				}
 				return nil
@@ -573,7 +582,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.FlawError(flaw.From(err))).Msg("Failed to send reply")
+				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
 				return nil
 			}
 		}
@@ -690,31 +699,43 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	case "playlist":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download playlist")
 		if err := downloader.Playlist(jobCtx, id); nil != err {
-			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+			switch {
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
 				return err
+			case errutil.IsFlaw(err):
+				return must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			return must.BeFlaw(err).Append(flawP)
 		}
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting playlist upload")
 		if err := w.uploadPlaylist(jobCtx, downloadBaseDir); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
+			switch {
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
 				return err
+			case errutil.IsFlaw(err):
+				return must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			return must.BeFlaw(err).Append(flawP)
 		}
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Playlist upload finished")
 	case "album":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download album")
 		if err := downloader.Album(jobCtx, id); nil != err {
-			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+			switch {
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
 				return err
+			case errutil.IsFlaw(err):
+				return must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			return must.BeFlaw(err).Append(flawP)
 		}
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting album upload")
 		if err := w.uploadAlbum(jobCtx, downloadBaseDir); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
 			}
 			return must.BeFlaw(err).Append(flawP)
 		}
@@ -722,15 +743,19 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	case "track":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download track")
 		if err := downloader.Track(jobCtx, id); nil != err {
-			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+			switch {
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
 				return err
+			case errutil.IsFlaw(err):
+				return must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			return must.BeFlaw(err).Append(flawP)
 		}
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting track upload")
 		if err := w.uploadSingle(jobCtx, downloadBaseDir); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
 			}
 			return must.BeFlaw(err).Append(flawP)
 		}
@@ -738,15 +763,19 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	case "mix":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download mix")
 		if err := downloader.Mix(jobCtx, id); nil != err {
-			if err, ok := errutil.IsAny(err, auth.ErrUnauthorized, context.DeadlineExceeded, context.Canceled); ok {
+			switch {
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
 				return err
+			case errutil.IsFlaw(err):
+				return must.BeFlaw(err).Append(flawP)
+			default:
+				panic(errutil.UnknownError(err))
 			}
-			return must.BeFlaw(err).Append(flawP)
 		}
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting mix upload")
 		if err := w.uploadMix(jobCtx, downloadBaseDir); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
 			}
 			return must.BeFlaw(err).Append(flawP)
 		}
@@ -754,297 +783,4 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		panic("unsupported link kind to download: " + kind)
 	}
 	return nil
-}
-
-func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
-	albumDir := path.Join(path.Join(baseDir, "albums", w.currentJob.ID))
-	flawP := flaw.P{"album_dir": albumDir}
-	files, err := os.ReadDir(albumDir)
-	if nil != err {
-		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
-	}
-	volumesCount := len(files)
-	flawP["volumes_count"] = volumesCount
-	loopFlawPs := make([]flaw.P, volumesCount)
-	flawP["loop_payloads"] = loopFlawPs
-	for volIdx := range volumesCount {
-		if !files[volIdx].IsDir() {
-			continue
-		}
-		volDirPath := path.Join(albumDir, strconv.Itoa(volIdx+1))
-		loopFlawP := flaw.P{"volume_dir": volDirPath}
-		loopFlawPs[volIdx] = loopFlawP
-		tracks, err := w.readVolumeInfo(volDirPath)
-		if nil != err {
-			return must.BeFlaw(err).Append(flawP)
-		}
-		if err := w.uploadVolumeTracks(ctx, baseDir, tracks); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-	}
-	return nil
-}
-
-func (w *Worker) readVolumeInfo(dirPath string) (tracks []tidl.AlbumTrack, err error) {
-	volumeInfoFilePath := path.Join(dirPath, "volume.json")
-	flawP := flaw.P{"volume_info_file_path": volumeInfoFilePath}
-	f, err := os.OpenFile(volumeInfoFilePath, os.O_RDONLY, 0o644)
-	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to open volume file: %v", err)).Append(flawP)
-	}
-	defer func() {
-		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close volume file: %v", closeErr)).Append(flawP)
-			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
-			}
-		}
-	}()
-	if err := json.NewDecoder(f).Decode(&tracks); nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to unmarshal volume file: %v", err))
-	}
-	return tracks, nil
-}
-
-func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, tracks []tidl.AlbumTrack) error {
-	batches := slices.Chunk(tracks, 10)
-	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), 10))
-	flawP := flaw.P{"loop_payloads": loopFlawPs}
-	for batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.AlbumTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs = append(loopFlawPs, loopFlawP)
-		flawP["loop_payloads"] = loopFlawPs
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-	}
-	return nil
-}
-
-func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string) error {
-	album := make([]message.MultiMediaOption, len(fileNames))
-	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(-1)
-	loopFlawPs := make([]flaw.P, len(fileNames))
-	flawP := flaw.P{"loop_payloads": loopFlawPs}
-	for i, trackFileName := range fileNames {
-		wg.Go(func() error {
-			fileName := path.Join(baseDir, trackFileName)
-			loopFlawP := flaw.P{"file_name": fileName}
-			loopFlawPs[i] = loopFlawP
-			info, err := tidl.ReadTrackInfoFile(wgCtx, fileName)
-			if nil != err {
-				if errors.Is(err, context.Canceled) {
-					return context.Canceled
-				}
-				return must.BeFlaw(err).Append(flawP)
-			}
-			loopFlawP["info"] = info.FlawP()
-			document, err := w.uploadTrack(wgCtx, fileName, *info)
-			if nil != err {
-				if err, ok := errutil.IsAny(err, context.Canceled); ok {
-					return err
-				}
-				return must.BeFlaw(err).Append(flawP)
-			}
-			album[i] = document
-			return nil
-		})
-	}
-
-	if err := wg.Wait(); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return err
-		}
-		return must.BeFlaw(err).Append(flawP)
-	}
-
-	var rest []message.MultiMediaOption
-	if len(album) > 1 {
-		rest = album[1:]
-	}
-
-	target := w.config.TargetPeerID
-	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Reply(w.currentJob.MessageID).Album(ctx, album[0], rest...); nil != err {
-		if errors.Is(err, context.Canceled) {
-			return context.Canceled
-		}
-		return flaw.From(fmt.Errorf("failed to send media album to specified target %q: %v", target, err)).Append(flawP)
-	}
-	return nil
-}
-
-func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
-	playlistDir := path.Join(path.Join(baseDir, "playlists", w.currentJob.ID))
-	flawP := flaw.P{"playlist_dir": playlistDir}
-	tracks, err := readTracksDirInfo[tidl.PlaylistTrack](ctx, playlistDir)
-	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return err
-		}
-		return must.BeFlaw(err).Append(flawP)
-	}
-
-	batches := slices.Chunk(tracks, 10)
-	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), 10))
-	flawP["loop_payloads"] = loopFlawPs
-	for batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.PlaylistTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs = append(loopFlawPs, loopFlawP)
-		flawP["loop_payloads"] = loopFlawPs
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-	}
-	return nil
-}
-
-func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
-	mixDir := path.Join(path.Join(baseDir, "mixes", w.currentJob.ID))
-	flawP := flaw.P{"mix_dir": mixDir}
-	tracks, err := readTracksDirInfo[tidl.MixTrack](ctx, mixDir)
-	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return err
-		}
-		return must.BeFlaw(err).Append(flawP)
-	}
-
-	batches := slices.Chunk(tracks, 10)
-	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), 10))
-	flawP["loop_payloads"] = loopFlawPs
-	for batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.MixTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs = append(loopFlawPs, loopFlawP)
-		flawP["loop_payloads"] = loopFlawPs
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames); nil != err {
-			if err, ok := errutil.IsAny(err, context.Canceled); ok {
-				return err
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-	}
-	return nil
-}
-
-func readTracksDirInfo[T any](ctx context.Context, dirPath string) (tracks []T, err error) {
-	f, err := os.OpenFile(path.Join(dirPath, "info.json"), os.O_RDONLY, 0o644)
-	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to open dir info file: %v", err))
-	}
-	defer func() {
-		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr))
-			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
-			}
-		}
-	}()
-
-	if err := json.NewDecoder(f).DecodeContext(ctx, &tracks); nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
-		}
-		return nil, flaw.From(fmt.Errorf("failed to unmarshal dir info file: %v", err))
-	}
-
-	return tracks, nil
-}
-
-func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
-	trackDir := path.Join(path.Join(basePath, "singles", w.currentJob.ID))
-	flawP := flaw.P{"track_dir": trackDir}
-	entries, err := os.ReadDir(trackDir)
-	if nil != err {
-		return flaw.From(fmt.Errorf("failed to read directory: %v", err))
-	}
-	var document *message.UploadedDocumentBuilder
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		fileName := path.Join(trackDir, strings.TrimSuffix(entry.Name(), ".json"))
-		flawP["track_file_name"] = fileName
-		track, err := tidl.ReadTrackInfoFile(ctx, fileName)
-		if nil != err {
-			if errors.Is(err, context.Canceled) {
-				return context.Canceled
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-		flawP["track_info"] = track.FlawP()
-		doc, err := w.uploadTrack(ctx, fileName, *track)
-		if nil != err {
-			if errors.Is(err, context.Canceled) {
-				return context.Canceled
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-		document = doc
-		break
-	}
-	target := w.config.TargetPeerID
-	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Media(ctx, document); nil != err {
-		if errors.Is(err, context.Canceled) {
-			return context.Canceled
-		}
-		return flaw.From(fmt.Errorf("failed to send media to specified target %q: %v", target, err)).Append(flawP)
-	}
-	return nil
-}
-
-func (w *Worker) uploadTrack(ctx context.Context, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
-	coverBytes, err := os.ReadFile(fileName + ".jpg")
-	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err))
-	}
-	cover, err := w.uploader.FromBytes(ctx, "cover.jpg", coverBytes)
-	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
-		}
-		return nil, flaw.From(fmt.Errorf("failed to upload track cover: %v", err))
-	}
-
-	upload, err := w.uploader.FromPath(ctx, fileName)
-	if nil != err {
-		if err, ok := errutil.IsAny(err, context.Canceled); ok {
-			return nil, err
-		}
-		return nil, flaw.From(fmt.Errorf("failed to upload track file: %v", err))
-	}
-
-	document := message.UploadedDocument(upload)
-	document.
-		MIME("audio/flac").
-		Attributes(
-			&tg.DocumentAttributeFilename{
-				FileName: filepath.Base(fileName),
-			},
-			//nolint:exhaustruct
-			&tg.DocumentAttributeAudio{
-				Title:     info.Title,
-				Performer: info.ArtistName,
-				Duration:  info.Duration,
-			},
-		).
-		Thumb(cover).
-		Audio()
-	return document, nil
 }
