@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,9 +15,8 @@ import (
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
-	"github.com/xeptore/tgtd/tidl/auth"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tidl/mpd"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 type TrackStream interface {
@@ -68,8 +68,6 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 				err = flaw.From(errors.New("context was ended")).Join(closeErr)
 			case errors.Is(err, context.DeadlineExceeded):
 				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errors.Is(err, auth.ErrUnauthorized):
-				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:
@@ -82,9 +80,19 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		return nil, auth.ErrUnauthorized
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read get track stream URLs response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	default:
-		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read get track stream URLs response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected status code received from get track stream URLs: %d", code)).Append(flawP)
 	}
 
 	var responseBody struct {

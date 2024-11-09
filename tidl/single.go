@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,8 +17,8 @@ import (
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tidl/auth"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 type Artist struct {
@@ -157,8 +158,18 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return nil, auth.ErrUnauthorized
 		}
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 

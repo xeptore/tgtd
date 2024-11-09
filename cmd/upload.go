@@ -18,9 +18,9 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/mathutil"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/sliceutil"
 	"github.com/xeptore/tgtd/tidl"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
