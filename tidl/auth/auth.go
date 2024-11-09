@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,9 +17,9 @@ import (
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/result"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const (
@@ -225,8 +226,18 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 		if responseBody.Status == 400 && responseBody.SubStatus == 11101 && responseBody.Error == "invalid_grant" && responseBody.ErrorDescription == "Token could not be verified" {
 			return nil, ErrUnauthorized
 		}
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read 400 status code response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.ErrorDescription)).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read %d status code response body: %v", code, err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
@@ -335,8 +346,18 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return ErrUnauthorized
 		}
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return flaw.From(fmt.Errorf("failed to read 401 status code response body: %w", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return flaw.From(fmt.Errorf("failed to read %d status code response body: %w", code, err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 }
@@ -459,6 +480,11 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	if response.StatusCode != http.StatusOK {
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", response.StatusCode)).Append(flawP)
 	}
 
@@ -601,8 +627,18 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 		if responseBody.Status == 400 && responseBody.Error == "authorization_pending" && responseBody.SubStatus == 1002 && responseBody.ErrorDescription == "Device Authorization code is not authorized yet" {
 			return nil, ErrUnauthorized
 		}
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read 400 status code response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.Error)).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read %d status code response body: %v", code, err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 

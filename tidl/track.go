@@ -8,8 +8,8 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const trackTypeResponseItem = "track"

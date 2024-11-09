@@ -18,9 +18,9 @@ import (
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidl/auth"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const (
@@ -74,8 +74,6 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 			return ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
 			return context.DeadlineExceeded
-		case errors.Is(err, auth.ErrUnauthorized):
-			return auth.ErrUnauthorized
 		case errutil.IsFlaw(err):
 			return must.BeFlaw(err).Append(flawP)
 		default:
@@ -157,8 +155,6 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 				err = flaw.From(errors.New("context has ended")).Join(closeErr)
 			case errors.Is(err, context.DeadlineExceeded):
 				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errors.Is(err, auth.ErrUnauthorized):
-				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:
@@ -171,8 +167,18 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		return auth.ErrUnauthorized
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
+		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return flaw.From(fmt.Errorf("unexpected status code received from get track cover: %d", code)).Append(flawP)
 	}
 
@@ -261,8 +267,18 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	switch code := response.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		return nil, auth.ErrUnauthorized
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 

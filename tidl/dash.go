@@ -16,9 +16,8 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/mathutil"
-	"github.com/xeptore/tgtd/tidl/auth"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tidl/mpd"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 type DashTrackStream struct {
@@ -40,8 +39,6 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 					return ctx.Err()
 				case errors.Is(err, context.DeadlineExceeded):
 					return context.DeadlineExceeded
-				case errors.Is(err, auth.ErrUnauthorized):
-					return auth.ErrUnauthorized
 				case errutil.IsFlaw(err):
 					return must.BeFlaw(err).Append(flawP)
 				default:
@@ -58,8 +55,6 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 			return ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
 			return context.DeadlineExceeded
-		case errors.Is(err, auth.ErrUnauthorized):
-			return auth.ErrUnauthorized
 		case errutil.IsFlaw(err):
 			return must.BeFlaw(err).Append(flawP)
 		default:
@@ -149,8 +144,6 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 				err = flaw.From(errors.New("context was ended")).Join(closeErr)
 			case errors.Is(err, context.DeadlineExceeded):
 				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errors.Is(err, auth.ErrUnauthorized):
-				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:
@@ -176,8 +169,6 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 				return ctx.Err()
 			case errors.Is(err, context.DeadlineExceeded):
 				return context.DeadlineExceeded
-			case errors.Is(err, auth.ErrUnauthorized):
-				return auth.ErrUnauthorized
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
 			default:
@@ -217,8 +208,18 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	switch status := response.StatusCode; status {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		return auth.ErrUnauthorized
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
+		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	default:
+		resBytes, err := io.ReadAll(response.Body)
+		if nil != err {
+			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
 		return flaw.From(fmt.Errorf("unexpected status code received from get track part: %d", status)).Append(flawP)
 	}
 

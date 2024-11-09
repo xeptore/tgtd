@@ -14,9 +14,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ratelimit"
-	"github.com/xeptore/tgtd/tidl/auth"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 func albumTrackDir(albumID string, volumeNumber int) string {
@@ -146,8 +145,6 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 			return nil, 0, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, 0, context.DeadlineExceeded
-		case errors.Is(err, auth.ErrUnauthorized):
-			return nil, 0, auth.ErrUnauthorized
 		case errutil.IsFlaw(err):
 			return nil, 0, must.BeFlaw(err).Append(flawP)
 		default:
@@ -260,8 +257,6 @@ func (d *Downloader) albumVolumes(ctx context.Context, id string) (AlbumVolumes,
 				break
 			case errors.Is(err, context.DeadlineExceeded):
 				return nil, context.DeadlineExceeded
-			case errors.Is(err, auth.ErrUnauthorized):
-				return nil, auth.ErrUnauthorized
 			case errutil.IsFlaw(err):
 				return nil, must.BeFlaw(err).Append(flawP)
 			default:

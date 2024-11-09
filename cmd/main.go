@@ -34,9 +34,9 @@ import (
 	"github.com/xeptore/tgtd/constant"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/log"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tidl"
 	"github.com/xeptore/tgtd/tidl/auth"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 const (
@@ -484,15 +484,6 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						return nil
 					}
 					return nil
-				case errors.Is(err, auth.ErrUnauthorized):
-					if _, err := reply.StyledText(ctx, styling.Plain("TIDAL authentication expired. Please re-authenticate the application.")); nil != err {
-						if errors.Is(err, context.Canceled) {
-							return nil
-						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
-						return nil
-					}
-					return nil
 				}
 				// handling the rest of possible error types that are not supported by switch/case syntactically.
 				if errInvalidLink := new(InvalidLinkError); errors.As(err, &errInvalidLink) {
@@ -701,7 +692,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download playlist")
 		if err := downloader.Playlist(jobCtx, id); nil != err {
 			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
@@ -712,7 +703,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting playlist upload")
 		if err := w.uploadPlaylist(jobCtx, downloadBaseDir); nil != err {
 			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
@@ -725,7 +716,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download album")
 		if err := downloader.Album(jobCtx, id); nil != err {
 			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
@@ -745,7 +736,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download track")
 		if err := downloader.Track(jobCtx, id); nil != err {
 			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
@@ -765,7 +756,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download mix")
 		if err := downloader.Mix(jobCtx, id); nil != err {
 			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrUnauthorized):
+			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)

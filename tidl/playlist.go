@@ -14,10 +14,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
-	"github.com/xeptore/tgtd/tidl/auth"
-	"github.com/xeptore/tgtd/tidl/must"
 )
 
 func playlistTrackDir(playlistID string) string {
@@ -198,8 +197,6 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 			return nil, 0, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, 0, context.DeadlineExceeded
-		case errors.Is(err, auth.ErrUnauthorized):
-			return nil, 0, auth.ErrUnauthorized
 		case errutil.IsFlaw(err):
 			return nil, 0, must.BeFlaw(err).Append(flawP)
 		default:
@@ -284,8 +281,6 @@ func (d *Downloader) playlistTracks(ctx context.Context, id string) ([]PlaylistT
 				break
 			case errors.Is(err, context.DeadlineExceeded):
 				return nil, context.DeadlineExceeded
-			case errors.Is(err, auth.ErrUnauthorized):
-				return nil, auth.ErrUnauthorized
 			case errutil.IsFlaw(err):
 				return nil, must.BeFlaw(err).Append(flawP)
 			default:
