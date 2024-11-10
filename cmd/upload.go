@@ -50,7 +50,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 		loopFlawP := flaw.P{"volume_dir": volDirPath}
 		loopFlawPs[volIdx] = loopFlawP
 
-		txt := html.Format(nil, "<em>Uploading album volume <b>%d</b></em>"+strconv.Itoa(volNum))
+		txt := html.Format(nil, "<em>Uploading album volume <b>%d</b></em>", volNum)
 		if _, err := w.sender.Resolve(w.config.TargetPeerID).Reply(w.currentJob.MessageID).StyledText(ctx, txt); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -71,7 +71,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 			return must.BeFlaw(err).Append(flawP)
 		}
 
-		txt = html.Format(nil, "<em>Album volume <b>%d</b> uploaded</em>"+strconv.Itoa(volNum))
+		txt = html.Format(nil, "<em>Album volume <b>%d</b> uploaded</em>", volNum)
 		if _, err := w.sender.Resolve(w.config.TargetPeerID).Reply(w.currentJob.MessageID).StyledText(ctx, txt); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
