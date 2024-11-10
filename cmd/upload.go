@@ -127,8 +127,8 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 
 			document, err := w.uploadTrack(wgCtx, fileName, *info)
 			if nil != err {
-				if errutil.IsContext(ctx) {
-					return ctx.Err()
+				if errutil.IsContext(wgCtx) {
+					return wgCtx.Err()
 				}
 				return must.BeFlaw(err).Append(flawP)
 			}
