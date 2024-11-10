@@ -15,7 +15,6 @@ import (
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
-	// "github.com/iyear/tdl/core/uploader".
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -111,9 +110,6 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, tracks 
 func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string) (err error) {
 	album := make([]message.MultiMediaOption, len(fileNames))
 
-	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(ratelimit.AlbumUploadConcurrency)
-
 	flawP := flaw.P{}
 
 	uploader, cancel := w.newUploader(ctx)
@@ -133,6 +129,9 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 			}
 		}
 	}()
+
+	wg, wgCtx := errgroup.WithContext(ctx)
+	wg.SetLimit(ratelimit.AlbumUploadConcurrency)
 
 	loopFlawPs := make([]flaw.P, len(fileNames))
 	flawP["loop_payloads"] = loopFlawPs
@@ -173,7 +172,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 	}
 
 	target := w.config.TargetPeerID
-	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Reply(w.currentJob.MessageID).Album(ctx, album[0], rest...); nil != err {
+	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Clear().Album(ctx, album[0], rest...); nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
