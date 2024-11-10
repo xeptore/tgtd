@@ -20,6 +20,7 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/html"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/telegram/uploader"
@@ -283,7 +284,12 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 
 			logger.Info().Msg("TIDAL authentication was successful")
-			if _, err := chat.StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
+			lines := []styling.StyledTextOption{
+				styling.Plain("TIDAL authentication was successful!"),
+				styling.Plain("\n"),
+				styling.Plain("Waiting for your command..."),
+			}
+			if _, err := chat.StyledText(ctx, lines...); nil != err {
 				if errors.Is(ctx.Err(), context.Canceled) {
 					return context.Canceled
 				}
@@ -471,7 +477,12 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 
 			w.tidlAuth = res.Unwrap()
 
-			if _, err := reply.StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
+			lines = []styling.StyledTextOption{
+				styling.Plain("TIDAL authentication was successful!"),
+				styling.Plain("\n"),
+				styling.Plain("Waiting for your command..."),
+			}
+			if _, err := reply.StyledText(ctx, lines...); nil != err {
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
@@ -736,9 +747,18 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	const downloadBaseDir = "downloads"
 	downloader := tidl.NewDownloader(w.tidlAuth, downloadBaseDir, w.logger.With().Logger())
 
+	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
+
 	switch kind {
 	case "playlist":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download playlist")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Downloading playlist...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := downloader.Playlist(jobCtx, id); nil != err {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
@@ -749,7 +769,15 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 				panic(errutil.UnknownError(err))
 			}
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting playlist upload")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Download finished. Starting playlist upload...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := w.uploadPlaylist(jobCtx, downloadBaseDir); nil != err {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
@@ -760,9 +788,23 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 				panic(errutil.UnknownError(err))
 			}
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Playlist upload finished")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Playlist uploaded successfully.</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
 	case "album":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download album")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Downloading album...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := downloader.Album(jobCtx, id); nil != err {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
@@ -773,16 +815,38 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 				panic(errutil.UnknownError(err))
 			}
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting album upload")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Download finished. Starting album upload...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := w.uploadAlbum(jobCtx, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return must.BeFlaw(err).Append(flawP)
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Album upload finished")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Album uploaded successfully.</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
 	case "track":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download track")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Downloading track...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := downloader.Track(jobCtx, id); nil != err {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
@@ -793,16 +857,38 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 				panic(errutil.UnknownError(err))
 			}
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting track upload")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Download finished. Starting track upload...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := w.uploadSingle(jobCtx, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return must.BeFlaw(err).Append(flawP)
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Track upload finished")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Track uploaded successfully.</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
 	case "mix":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download mix")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Downloading mix...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := downloader.Mix(jobCtx, id); nil != err {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
@@ -813,12 +899,28 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 				panic(errutil.UnknownError(err))
 			}
 		}
+
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting mix upload")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Download finished. Starting mix upload...</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
 		if err := w.uploadMix(jobCtx, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return must.BeFlaw(err).Append(flawP)
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+		}
+
+		w.logger.Info().Str("id", id).Str("link", link).Msg("Mix upload finished")
+		if _, err := reply.StyledText(jobCtx, html.Format(nil, "<b><em>Mix uploaded successfully.</em></b>")); nil != err {
+			if errors.Is(jobCtx.Err(), context.Canceled) {
+				return jobCtx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
 	default:
 		panic("unsupported link kind to download: " + kind)

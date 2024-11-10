@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/goccy/go-json"
+	"github.com/rs/zerolog"
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
@@ -36,6 +37,14 @@ func (t *TrackInfo) FlawP() flaw.P {
 		"artist_name": t.ArtistName,
 		"version":     ptr.ValueOr(t.Version, ""),
 	}
+}
+
+func (t *TrackInfo) Log(e *zerolog.Event) {
+	e.
+		Int("duration", t.Duration).
+		Str("title", t.Title).
+		Str("artist_name", t.ArtistName).
+		Str("version", ptr.ValueOr(t.Version, ""))
 }
 
 func (d *Downloader) Track(ctx context.Context, id string) error {
