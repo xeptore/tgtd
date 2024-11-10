@@ -155,7 +155,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close get cover response body: %v", closeErr))
+			closeErr = flaw.From(fmt.Errorf("failed to close get cover response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr

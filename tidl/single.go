@@ -123,7 +123,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close get track info response body: %v", closeErr))
+			closeErr = flaw.From(fmt.Errorf("failed to close get track info response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr

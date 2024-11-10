@@ -68,7 +68,7 @@ func (w *Worker) readVolumeInfo(dirPath string) (tracks []tidl.AlbumTrack, err e
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close volume file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
@@ -222,7 +222,8 @@ func readTracksDirInfo[T any](dirPath string) (tracks []T, err error) {
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
 			} else {

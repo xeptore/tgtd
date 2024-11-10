@@ -144,7 +144,7 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
 			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
