@@ -7,6 +7,7 @@ import (
 
 const (
 	AlbumDownloadConcurrency    = 5
+	AlbumUploadConcurrency      = 4
 	PlaylistDownloadConcurrency = 5
 	MixDownloadConcurrency      = 5
 )

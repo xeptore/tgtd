@@ -91,7 +91,8 @@ func FlawToTOML(f *flaw.Flaw) ([]byte, error) {
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(fl); err != nil {
-		return nil, flaw.From(fmt.Errorf("failed to encode flaw to toml: %v", err))
+		flawP := flaw.P{"err_debug_tree": Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to encode flaw to toml: %v", err)).Append(flawP)
 	}
 
 	return buf.Bytes(), nil

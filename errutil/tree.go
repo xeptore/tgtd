@@ -1,0 +1,69 @@
+package errutil
+
+import (
+	"fmt"
+
+	"github.com/xeptore/flaw/v8"
+)
+
+type ErrInfo struct {
+	Message    string
+	TypeName   string
+	SyntaxRepr string
+	Children   []ErrInfo
+}
+
+func (e ErrInfo) FlawP() flaw.P {
+	var ch []flaw.P
+	if len(e.Children) > 0 {
+		ch := make([]flaw.P, 0, len(e.Children))
+		for _, child := range e.Children {
+			ch = append(ch, child.FlawP())
+		}
+	}
+
+	return flaw.P{
+		"message":     e.Message,
+		"type_name":   e.TypeName,
+		"syntax_repr": e.SyntaxRepr,
+		"children":    ch,
+	}
+}
+
+func Tree(err error) ErrInfo {
+	if err == nil {
+		panic("nil error")
+	}
+
+	switch x := err.(type) {
+	case interface{ Unwrap() error }:
+		var children []ErrInfo
+		if err := x.Unwrap(); nil != err {
+			children = []ErrInfo{Tree(err)}
+		}
+		return ErrInfo{
+			Message:  err.Error(),
+			TypeName: fmt.Sprintf("%T", err),
+			Children: children,
+		}
+	case interface{ Unwrap() []error }:
+		errs := x.Unwrap()
+		joined := make([]ErrInfo, 0, len(errs))
+		for _, err := range errs {
+			joined = append(joined, Tree(err))
+		}
+		return ErrInfo{
+			Message:    err.Error(),
+			TypeName:   fmt.Sprintf("%T", err),
+			SyntaxRepr: fmt.Sprintf("%+#v", err),
+			Children:   joined,
+		}
+	default:
+		return ErrInfo{
+			Message:    err.Error(),
+			TypeName:   fmt.Sprintf("%T", err),
+			SyntaxRepr: fmt.Sprintf("%+#v", err),
+			Children:   nil,
+		}
+	}
+}

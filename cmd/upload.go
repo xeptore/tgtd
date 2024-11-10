@@ -19,6 +19,7 @@ import (
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/sliceutil"
 	"github.com/xeptore/tgtd/tidl"
 )
@@ -28,6 +29,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 	flawP := flaw.P{"album_dir": albumDir}
 	files, err := os.ReadDir(albumDir)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
 	}
 
@@ -61,10 +63,12 @@ func (w *Worker) readVolumeInfo(dirPath string) (tracks []tidl.AlbumTrack, err e
 	flawP := flaw.P{"volume_info_file_path": volumeInfoFilePath}
 	f, err := os.OpenFile(volumeInfoFilePath, os.O_RDONLY, 0o644)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to open volume file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close volume file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
@@ -74,7 +78,8 @@ func (w *Worker) readVolumeInfo(dirPath string) (tracks []tidl.AlbumTrack, err e
 		}
 	}()
 	if err := json.NewDecoder(f).Decode(&tracks); nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to unmarshal volume file: %v", err))
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to unmarshal volume file: %v", err)).Append(flawP)
 	}
 	return tracks, nil
 }
@@ -104,7 +109,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 	album := make([]message.MultiMediaOption, len(fileNames))
 
 	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(-1)
+	wg.SetLimit(ratelimit.AlbumUploadConcurrency)
 
 	loopFlawPs := make([]flaw.P, len(fileNames))
 	flawP := flaw.P{"loop_payloads": loopFlawPs}
@@ -149,6 +154,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to send media album to specified target %q: %v", target, err)).Append(flawP)
 	}
 	return nil
@@ -211,11 +217,13 @@ func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
 func readTracksDirInfo[T any](dirPath string) (tracks []T, err error) {
 	f, err := os.OpenFile(path.Join(dirPath, "info.json"), os.O_RDONLY, 0o644)
 	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to open dir info file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to open dir info file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
 			} else {
@@ -225,7 +233,8 @@ func readTracksDirInfo[T any](dirPath string) (tracks []T, err error) {
 	}()
 
 	if err := json.NewDecoder(f).Decode(&tracks); nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to unmarshal dir info file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to unmarshal dir info file: %v", err)).Append(flawP)
 	}
 
 	return tracks, nil
@@ -236,7 +245,8 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 	flawP := flaw.P{"track_dir": trackDir}
 	entries, err := os.ReadDir(trackDir)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to read directory: %v", err))
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
 	}
 
 	var document *message.UploadedDocumentBuilder
@@ -270,6 +280,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to send media to specified target %q: %v", target, err)).Append(flawP)
 	}
 	return nil
@@ -278,14 +289,16 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 func (w *Worker) uploadTrack(ctx context.Context, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
 	coverBytes, err := os.ReadFile(fileName + ".jpg")
 	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err)).Append(flawP)
 	}
 	cover, err := w.uploader.FromBytes(ctx, "cover.jpg", coverBytes)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
-		return nil, flaw.From(fmt.Errorf("failed to upload track cover: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to upload track cover: %v", err)).Append(flawP)
 	}
 
 	upload, err := w.uploader.FromPath(ctx, fileName)
@@ -293,7 +306,8 @@ func (w *Worker) uploadTrack(ctx context.Context, fileName string, info tidl.Tra
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
-		return nil, flaw.From(fmt.Errorf("failed to upload track file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to upload track file: %v", err)).Append(flawP)
 	}
 
 	document := message.UploadedDocument(upload)

@@ -28,8 +28,6 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		return err
 	}
 
-	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(ratelimit.AlbumDownloadConcurrency)
 	for i := range volumes {
 		volNum := i + 1
 		flawP := flaw.P{"volume_number": volNum}
@@ -38,6 +36,8 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		}
 	}
 
+	wg, wgCtx := errgroup.WithContext(ctx)
+	wg.SetLimit(ratelimit.AlbumDownloadConcurrency)
 	for _, volumeTracks := range volumes {
 		for _, track := range volumeTracks {
 			wg.Go(func() error { return d.download(wgCtx, &track) })
@@ -55,9 +55,11 @@ func (d *Downloader) prepareAlbumVolumeDir(albumID string, volNumber int, tracks
 	volDir := path.Join(d.basePath, albumTrackDir(albumID, volNumber))
 	flawP := flaw.P{"volume_dir": volDir}
 	if err := os.RemoveAll(volDir); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to delete possibly existing album volume directory: %v", err)).Append(flawP)
 	}
 	if err := os.MkdirAll(volDir, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create album volume directory: %v", err)).Append(flawP)
 	}
 
@@ -65,10 +67,12 @@ func (d *Downloader) prepareAlbumVolumeDir(albumID string, volNumber int, tracks
 	flawP["volume_info_file"] = volumeInfoFilePath
 	f, err := os.OpenFile(volumeInfoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create volume info file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close volume info file properly: %v", err)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
@@ -78,9 +82,11 @@ func (d *Downloader) prepareAlbumVolumeDir(albumID string, volNumber int, tracks
 		}
 	}()
 	if err := json.NewEncoder(f).Encode(tracks); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode and write volume info json file content: %v", err)).Append(flawP)
 	}
 	if err := f.Sync(); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to sync volume info file: %v", err)).Append(flawP)
 	}
 
@@ -134,7 +140,8 @@ func (t *AlbumTrack) info() TrackInfo {
 func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (tracks []AlbumTrack, remaining int, err error) {
 	albumURL, err := url.JoinPath(fmt.Sprintf(albumItemsAPIFormat, id))
 	if nil != err {
-		return nil, 0, flaw.From(fmt.Errorf("failed to join track base URL with track id: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, 0, flaw.From(fmt.Errorf("failed to join track base URL with track id: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"url": albumURL}
 
@@ -153,6 +160,7 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get album page items response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
@@ -198,6 +206,7 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, 0, context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, 0, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
 		}
 	}
