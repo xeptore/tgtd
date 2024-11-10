@@ -428,8 +428,6 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth
 				creds, err := res.poll(ctx)
 				if nil != err {
 					switch {
-					case errors.Is(ctx.Err(), context.DeadlineExceeded):
-						// Nothing, as polled had a chance to poll the API for one last time.
 					case errors.Is(ctx.Err(), context.Canceled):
 						done <- result.Err[Auth](context.Canceled)
 						return
@@ -438,11 +436,13 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth
 					case errors.Is(err, context.DeadlineExceeded):
 						// The poller has timed out, not the auth-wait context
 						done <- result.Err[Auth](flaw.From(errors.New("failed to poll authorization status due to timeout")))
+						return
 					case errors.Is(err, ErrUnauthorized):
 						continue waitloop
 					case errutil.IsFlaw(err):
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 						done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
+						return
 					default:
 						panic(errutil.UnknownError(err))
 					}
