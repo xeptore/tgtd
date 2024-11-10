@@ -87,7 +87,7 @@ func (w *Worker) readVolumeInfo(dirPath string) (tracks []tidl.AlbumTrack, err e
 }
 
 func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, tracks []tidl.AlbumTrack) error {
-	const batchSize = 10
+	batchSize := mathutil.OptimalAlbumSize(len(tracks))
 	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), batchSize))
 	flawP := flaw.P{"loop_payloads": loopFlawPs}
 
@@ -190,8 +190,9 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 		return must.BeFlaw(err).Append(flawP)
 	}
 
-	batches := slices.Chunk(tracks, 10)
-	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), 10))
+	batchSize := mathutil.OptimalAlbumSize(len(tracks))
+	batches := slices.Chunk(tracks, batchSize)
+	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), batchSize))
 	flawP["loop_payloads"] = loopFlawPs
 	for batch := range batches {
 		fileNames := sliceutil.Map(batch, func(track tidl.PlaylistTrack) string { return track.FileName() })
@@ -217,8 +218,9 @@ func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
 		return must.BeFlaw(err).Append(flawP)
 	}
 
-	batches := slices.Chunk(tracks, 10)
-	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), 10))
+	batchSize := mathutil.OptimalAlbumSize(len(tracks))
+	batches := slices.Chunk(tracks, batchSize)
+	loopFlawPs := make([]flaw.P, 0, mathutil.CeilInts(len(tracks), batchSize))
 	flawP["loop_payloads"] = loopFlawPs
 	for batch := range batches {
 		fileNames := sliceutil.Map(batch, func(track tidl.MixTrack) string { return track.FileName() })
