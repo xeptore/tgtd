@@ -771,9 +771,9 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
-			const maxAttempts = 5
+			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
-			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := downloader.Playlist(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
@@ -830,9 +830,9 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
-			const maxAttempts = 5
+			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
-			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := downloader.Album(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
@@ -885,9 +885,9 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
-			const maxAttempts = 5
+			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
-			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := downloader.Track(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
@@ -940,9 +940,9 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
-			const maxAttempts = 5
+			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
-			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := downloader.Mix(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
