@@ -398,10 +398,15 @@ type authorizationResponse struct {
 
 var ErrAuthWaitTimeout = errors.New("authorization wait timeout")
 
-func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth], err error) {
+type AuthorizationResult struct {
+	URL       string
+	ExpiresIn time.Duration
+}
+
+func NewAuthorizer(ctx context.Context) (link *AuthorizationResult, wait <-chan result.Of[Auth], err error) {
 	res, err := issueAuthorizationRequest(ctx)
 	if nil != err {
-		return "", nil, err
+		return nil, nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(res.ExpiresIn)*time.Second)
@@ -460,7 +465,10 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth
 		}
 	}()
 
-	return res.URL, done, nil
+	return &AuthorizationResult{
+		URL:       res.URL,
+		ExpiresIn: time.Duration(res.ExpiresIn) * time.Second,
+	}, done, nil
 }
 
 func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse, err error) {

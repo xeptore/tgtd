@@ -203,7 +203,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 
 			logger.Debug().Msg("Need to authenticate TIDAL. Initiating TIDAL authorization flow")
-			link, wait, err := auth.NewAuthorizer(ctx)
+			authorization, wait, err := auth.NewAuthorizer(ctx)
 			if nil != err {
 				switch {
 				case errors.Is(ctx.Err(), context.Canceled):
@@ -221,7 +221,10 @@ func run(cliCtx *cli.Context) (err error) {
 				ctx,
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
-				styling.URL(link),
+				styling.URL(authorization.URL),
+				styling.Plain("\n"),
+				styling.Plain("Authorization link will expire in "),
+				styling.Code(authorization.ExpiresIn.String()),
 				styling.Plain("\n"),
 				styling.Italic("Waiting for authentication..."),
 			)
@@ -329,7 +332,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 		}
 
 		if msg == "/authorize" {
-			link, wait, err := auth.NewAuthorizer(ctx)
+			authorization, wait, err := auth.NewAuthorizer(ctx)
 			if nil != err {
 				switch {
 				case errors.Is(ctx.Err(), context.Canceled):
@@ -380,7 +383,11 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 			lines := []styling.StyledTextOption{
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
-				styling.URL(link),
+				styling.URL(authorization.URL),
+				styling.Plain("\n"),
+				styling.Plain("Authorization link will expire in "),
+				styling.Code(authorization.ExpiresIn.String()),
+				styling.Plain("\n"),
 				styling.Italic("Waiting for authentication..."),
 			}
 			if _, err := reply.StyledText(ctx, lines...); nil != err {
