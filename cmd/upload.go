@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
+	// "github.com/iyear/tdl/core/uploader".
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -105,14 +108,34 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, tracks 
 	return nil
 }
 
-func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string) error {
+func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string) (err error) {
 	album := make([]message.MultiMediaOption, len(fileNames))
 
 	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(ratelimit.AlbumUploadConcurrency)
 
+	flawP := flaw.P{}
+
+	uploader, cancel := w.newUploader(ctx)
+	defer func() {
+		if cancelErr := cancel(); nil != cancelErr {
+			flawP["err_debug_tree"] = errutil.Tree(cancelErr).FlawP()
+			cancelErr = flaw.From(fmt.Errorf("failed to close uploader pool: %v", cancelErr)).Append(flawP)
+			switch {
+			case nil == err:
+				err = cancelErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context ended")).Join(cancelErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(cancelErr)
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+	}()
+
 	loopFlawPs := make([]flaw.P, len(fileNames))
-	flawP := flaw.P{"loop_payloads": loopFlawPs}
+	flawP["loop_payloads"] = loopFlawPs
 	for i, trackFileName := range fileNames {
 		wg.Go(func() error {
 			fileName := path.Join(baseDir, trackFileName)
@@ -125,7 +148,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 			}
 			loopFlawP["info"] = info.FlawP()
 
-			document, err := w.uploadTrack(wgCtx, fileName, *info)
+			document, err := uploadTrack(wgCtx, uploader, fileName, *info)
 			if nil != err {
 				if errutil.IsContext(wgCtx) {
 					return wgCtx.Err()
@@ -249,6 +272,24 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
 	}
 
+	uploader, cancel := w.newUploader(ctx)
+	defer func() {
+		if cancelErr := cancel(); nil != cancelErr {
+			flawP["err_debug_tree"] = errutil.Tree(cancelErr).FlawP()
+			cancelErr = flaw.From(fmt.Errorf("failed to cancel uploader pool: %v", cancelErr)).Append(flawP)
+			switch {
+			case nil == err:
+				err = cancelErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context ended")).Join(cancelErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(cancelErr)
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+	}()
+
 	var document *message.UploadedDocumentBuilder
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
@@ -264,7 +305,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		}
 		flawP["track_info"] = track.FlawP()
 
-		doc, err := w.uploadTrack(ctx, fileName, *track)
+		doc, err := uploadTrack(ctx, uploader, fileName, *track)
 		if nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -286,13 +327,13 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 	return nil
 }
 
-func (w *Worker) uploadTrack(ctx context.Context, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
+func uploadTrack(ctx context.Context, uploader *uploader.Uploader, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
 	coverBytes, err := os.ReadFile(fileName + ".jpg")
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err)).Append(flawP)
 	}
-	cover, err := w.uploader.FromBytes(ctx, "cover.jpg", coverBytes)
+	cover, err := uploader.FromBytes(ctx, "cover.jpg", coverBytes)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
@@ -301,7 +342,7 @@ func (w *Worker) uploadTrack(ctx context.Context, fileName string, info tidl.Tra
 		return nil, flaw.From(fmt.Errorf("failed to upload track cover: %v", err)).Append(flawP)
 	}
 
-	upload, err := w.uploader.FromPath(ctx, fileName)
+	upload, err := uploader.FromPath(ctx, fileName)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()

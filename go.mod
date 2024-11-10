@@ -4,8 +4,10 @@ go 1.23.3
 
 require (
 	github.com/BurntSushi/toml v1.4.0
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/goccy/go-json v0.10.3
 	github.com/gotd/td v0.111.2
+	github.com/iyear/tdl/core v0.17.7
 	github.com/joho/godotenv v1.5.1
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.9.0
@@ -18,7 +20,6 @@ require (
 )
 
 require (
-	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.5 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect

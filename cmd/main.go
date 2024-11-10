@@ -24,6 +24,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
+	"github.com/iyear/tdl/core/dcpool"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
@@ -34,6 +35,7 @@ import (
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/log"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/tgutil"
 	"github.com/xeptore/tgtd/tidl"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
@@ -130,16 +132,6 @@ func run(cliCtx *cli.Context) (err error) {
 		return errors.New("failed to parse APP_ID environment variable to integer")
 	}
 
-	w := &Worker{
-		mutex:      sync.Mutex{},
-		config:     cfg,
-		uploader:   nil,
-		sender:     nil,
-		tidlAuth:   nil,
-		currentJob: nil,
-		logger:     logger.With().Str("module", "worker").Logger(),
-	}
-
 	d := tg.NewUpdateDispatcher()
 	d.OnNewMessage(func(context.Context, tg.Entities, *tg.UpdateNewMessage) error { return nil })
 	updateHandler := updates.New(updates.Config{Handler: d}) //nolint:exhaustruct
@@ -151,13 +143,26 @@ func run(cliCtx *cli.Context) (err error) {
 		telegram.Options{
 			SessionStorage: &session.FileStorage{Path: "session.json"},
 			UpdateHandler:  updateHandler,
-			MaxRetries:     10,
+			MaxRetries:     -1,
 			AckBatchSize:   100,
 			AckInterval:    10 * time.Second,
-			RetryInterval:  3 * time.Second,
+			RetryInterval:  5 * time.Second,
+			DialTimeout:    10 * time.Second,
+			Device:         tgutil.Device,
+			Middlewares:    tgutil.DefaultMiddlewares(ctx),
 		},
 	)
 	logger.Debug().Msg("Telegram client initialized.")
+
+	w := &Worker{
+		mutex:      sync.Mutex{},
+		config:     cfg,
+		client:     client,
+		sender:     nil,
+		tidlAuth:   nil,
+		currentJob: nil,
+		logger:     logger.With().Str("module", "worker").Logger(),
+	}
 
 	return client.Run(ctx, func(ctx context.Context) error {
 		status, err := client.Auth().Status(ctx)
@@ -180,8 +185,7 @@ func run(cliCtx *cli.Context) (err error) {
 		}
 
 		api := tg.NewClient(client)
-		w.uploader = uploader.NewUploader(api)
-		w.sender = message.NewSender(api).WithUploader(w.uploader)
+		w.sender = message.NewSender(api)
 
 		tidlAuth, err := auth.Load(ctx)
 		if nil != err {
@@ -523,7 +527,15 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
 					return nil
 				}
-				upload, err := w.uploader.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
+				uploader, cancel := w.newUploader(ctx)
+				defer func() {
+					if cancelErr := cancel(); nil != cancelErr {
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(cancelErr).Append(flawP))).Msg("Failed to close uploader pool")
+					}
+				}()
+
+				upload, err := uploader.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
 				if nil != err {
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to TOML")
@@ -588,11 +600,16 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 type Worker struct {
 	mutex      sync.Mutex
 	config     *config.Config
-	uploader   *uploader.Uploader
+	client     *telegram.Client
 	sender     *message.Sender
 	tidlAuth   *auth.Auth
 	currentJob *Job
 	logger     zerolog.Logger
+}
+
+func (w *Worker) newUploader(ctx context.Context) (*uploader.Uploader, func() error) {
+	pool := dcpool.NewPool(w.client, 8, tgutil.DefaultMiddlewares(ctx)...)
+	return uploader.NewUploader(pool.Default(ctx)).WithPartSize(uploader.MaximumPartSize).WithThreads(4), pool.Close
 }
 
 type Job struct {

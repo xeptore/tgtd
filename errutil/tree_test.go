@@ -21,11 +21,12 @@ func TestTree(t *testing.T) {
 
 	t.Run("SimpleStringErr", func(t *testing.T) {
 		t.Parallel()
-		tree := errutil.Tree(fmt.Errorf("simple string error"))
+		tree := errutil.Tree(errors.New("simple string error"))
 		expected := errutil.ErrInfo{
-			Message:  "simple string error",
-			TypeName: "*errors.errorString",
-			Children: nil,
+			Message:    "simple string error",
+			TypeName:   "*errors.errorString",
+			SyntaxRepr: "",
+			Children:   nil,
 		}
 		assertErrInfoAreEqual(t, expected, tree)
 	})
@@ -34,23 +35,26 @@ func TestTree(t *testing.T) {
 		t.Parallel()
 		tree := errutil.Tree(
 			errors.Join(
-				fmt.Errorf("simple string error"),
-				fmt.Errorf("another simple string error"),
+				errors.New("simple string error"),
+				errors.New("another simple string error"),
 			),
 		)
 		expected := errutil.ErrInfo{
-			Message:  "simple string error\nanother simple string error",
-			TypeName: "*errors.joinError",
+			Message:    "simple string error\nanother simple string error",
+			TypeName:   "*errors.joinError",
+			SyntaxRepr: "",
 			Children: []errutil.ErrInfo{
 				{
-					Message:  "simple string error",
-					TypeName: "*errors.errorString",
-					Children: nil,
+					Message:    "simple string error",
+					TypeName:   "*errors.errorString",
+					SyntaxRepr: "",
+					Children:   nil,
 				},
 				{
-					Message:  "another simple string error",
-					TypeName: "*errors.errorString",
-					Children: nil,
+					Message:    "another simple string error",
+					TypeName:   "*errors.errorString",
+					SyntaxRepr: "",
+					Children:   nil,
 				},
 			},
 		}
@@ -61,76 +65,86 @@ func TestTree(t *testing.T) {
 		t.Parallel()
 		tree := errutil.Tree(
 			errors.Join(
-				fmt.Errorf("simple string error"),
+				errors.New("simple string error"),
 				errors.Join(
-					fmt.Errorf("first nested simple string error"),
-					fmt.Errorf("second nested simple string error"),
+					errors.New("first nested simple string error"),
+					errors.New("second nested simple string error"),
 					errors.Join(
-						fmt.Errorf("third nested simple string error"),
-						fmt.Errorf("fourth nested simple string error"),
-						fmt.Errorf("fifth nested simple string error"),
+						errors.New("third nested simple string error"),
+						errors.New("fourth nested simple string error"),
+						errors.New("fifth nested simple string error"),
 					),
 				),
-				fmt.Errorf("another simple string error"),
+				errors.New("another simple string error"),
 			),
 		)
 		expected := errutil.ErrInfo{
-			Message:  "simple string error\nfirst nested simple string error\nsecond nested simple string error\nthird nested simple string error\nfourth nested simple string error\nfifth nested simple string error\nanother simple string error",
-			TypeName: "*errors.joinError",
+			Message:    "simple string error\nfirst nested simple string error\nsecond nested simple string error\nthird nested simple string error\nfourth nested simple string error\nfifth nested simple string error\nanother simple string error",
+			TypeName:   "*errors.joinError",
+			SyntaxRepr: "",
 			Children: []errutil.ErrInfo{
 				{
-					Message:  "simple string error",
-					TypeName: "*errors.errorString",
-					Children: nil,
+					Message:    "simple string error",
+					TypeName:   "*errors.errorString",
+					SyntaxRepr: "",
+					Children:   nil,
 				},
 				{
-					Message:  "first nested simple string error\nsecond nested simple string error\nthird nested simple string error\nfourth nested simple string error\nfifth nested simple string error",
-					TypeName: "*errors.joinError",
+					Message:    "first nested simple string error\nsecond nested simple string error\nthird nested simple string error\nfourth nested simple string error\nfifth nested simple string error",
+					TypeName:   "*errors.joinError",
+					SyntaxRepr: "",
 					Children: []errutil.ErrInfo{
 						{
-							Message:  "first nested simple string error",
-							TypeName: "*errors.errorString",
-							Children: nil,
+							Message:    "first nested simple string error",
+							TypeName:   "*errors.errorString",
+							SyntaxRepr: "",
+							Children:   nil,
 						},
 						{
-							Message:  "second nested simple string error",
-							TypeName: "*errors.errorString",
-							Children: nil,
+							Message:    "second nested simple string error",
+							TypeName:   "*errors.errorString",
+							SyntaxRepr: "",
+							Children:   nil,
 						},
 						{
-							Message:  "third nested simple string error\nfourth nested simple string error\nfifth nested simple string error",
-							TypeName: "*errors.joinError",
+							Message:    "third nested simple string error\nfourth nested simple string error\nfifth nested simple string error",
+							TypeName:   "*errors.joinError",
+							SyntaxRepr: "",
 							Children: []errutil.ErrInfo{
 								{
-									Message:  "third nested simple string error",
-									TypeName: "*errors.errorString",
-									Children: nil,
+									Message:    "third nested simple string error",
+									TypeName:   "*errors.errorString",
+									SyntaxRepr: "",
+									Children:   nil,
 								},
 								{
-									Message:  "fourth nested simple string error",
-									TypeName: "*errors.errorString",
-									Children: nil,
+									Message:    "fourth nested simple string error",
+									TypeName:   "*errors.errorString",
+									SyntaxRepr: "",
+									Children:   nil,
 								},
 								{
-									Message:  "fifth nested simple string error",
-									TypeName: "*errors.errorString",
-									Children: nil,
+									Message:    "fifth nested simple string error",
+									TypeName:   "*errors.errorString",
+									SyntaxRepr: "",
+									Children:   nil,
 								},
 							},
 						},
 					},
 				},
 				{
-					Message:  "another simple string error",
-					TypeName: "*errors.errorString",
-					Children: nil,
+					Message:    "another simple string error",
+					TypeName:   "*errors.errorString",
+					SyntaxRepr: "",
+					Children:   nil,
 				},
 			},
 		}
 		assertErrInfoAreEqual(t, expected, tree)
 	})
 
-	var ErrRetryable = errors.New("retrayable error")
+	ErrRetryable := errors.New("retrayable error")
 
 	t.Run("UnwrapableErr", func(t *testing.T) {
 		t.Parallel()
@@ -142,26 +156,31 @@ func TestTree(t *testing.T) {
 			),
 		)
 		expected := errutil.ErrInfo{
-			Message:  "retrayable error\nos.ReadDir error: open nonexistent: no such file or directory",
-			TypeName: "*errors.joinError",
+			Message:    "retrayable error\nos.ReadDir error: open nonexistent: no such file or directory",
+			TypeName:   "*errors.joinError",
+			SyntaxRepr: "",
 			Children: []errutil.ErrInfo{
 				{
-					Message:  "retrayable error",
-					TypeName: "*errors.errorString",
-					Children: nil,
+					Message:    "retrayable error",
+					TypeName:   "*errors.errorString",
+					SyntaxRepr: "",
+					Children:   nil,
 				},
 				{
-					Message:  "os.ReadDir error: open nonexistent: no such file or directory",
-					TypeName: "*fmt.wrapError",
+					Message:    "os.ReadDir error: open nonexistent: no such file or directory",
+					TypeName:   "*fmt.wrapError",
+					SyntaxRepr: "",
 					Children: []errutil.ErrInfo{
 						{
-							Message:  "open nonexistent: no such file or directory",
-							TypeName: "*fs.PathError",
+							Message:    "open nonexistent: no such file or directory",
+							TypeName:   "*fs.PathError",
+							SyntaxRepr: "",
 							Children: []errutil.ErrInfo{
 								{
-									Message:  "no such file or directory",
-									TypeName: "syscall.Errno",
-									Children: nil,
+									Message:    "no such file or directory",
+									TypeName:   "syscall.Errno",
+									SyntaxRepr: "",
+									Children:   nil,
 								},
 							},
 						},
