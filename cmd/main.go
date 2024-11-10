@@ -304,6 +304,8 @@ func run(cliCtx *cli.Context) (err error) {
 		d.OnNewMessage(buildOnMessage(w))
 
 		logger.Info().Msg("Bot is running")
+		<-ctx.Done()
+		logger.Debug().Msg("Stopping bot due to received signal")
 		return nil
 	})
 }
