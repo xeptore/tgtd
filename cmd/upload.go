@@ -13,6 +13,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/html"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/xeptore/flaw/v8"
@@ -43,18 +44,40 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 		if !files[volIdx].IsDir() {
 			continue
 		}
-		volDirPath := path.Join(albumDir, strconv.Itoa(volIdx+1))
+
+		volNum := volIdx + 1
+		volDirPath := path.Join(albumDir, strconv.Itoa(volNum))
 		loopFlawP := flaw.P{"volume_dir": volDirPath}
 		loopFlawPs[volIdx] = loopFlawP
+
+		txt := html.Format(nil, "<em>Uploading album volume <b>%d</b></em>"+strconv.Itoa(volNum))
+		if _, err := w.sender.Resolve(w.config.TargetPeerID).Reply(w.currentJob.MessageID).StyledText(ctx, txt); nil != err {
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
+			}
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to send message: %v", err)).Append(flawP)
+		}
+
 		tracks, err := w.readVolumeInfo(volDirPath)
 		if nil != err {
 			return must.BeFlaw(err).Append(flawP)
 		}
+
 		if err := w.uploadVolumeTracks(ctx, baseDir, tracks); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
 			return must.BeFlaw(err).Append(flawP)
+		}
+
+		txt = html.Format(nil, "<em>Album volume <b>%d</b> uploaded</em>"+strconv.Itoa(volNum))
+		if _, err := w.sender.Resolve(w.config.TargetPeerID).Reply(w.currentJob.MessageID).StyledText(ctx, txt); nil != err {
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
+			}
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to send message: %v", err)).Append(flawP)
 		}
 	}
 	return nil
@@ -147,6 +170,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 			}
 			loopFlawP["info"] = info.FlawP()
 
+			w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Uploading track")
 			document, err := uploadTrack(wgCtx, uploader, fileName, *info)
 			if nil != err {
 				if errutil.IsContext(wgCtx) {
@@ -155,6 +179,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 				return must.BeFlaw(err).Append(flawP)
 			}
 			album[i] = document
+			w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Track uploaded")
 			return nil
 		})
 	}
