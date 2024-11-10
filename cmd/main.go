@@ -187,6 +187,17 @@ func run(cliCtx *cli.Context) (err error) {
 		api := tg.NewClient(client)
 		w.sender = message.NewSender(api)
 
+		chat := w.sender.Resolve(cfg.TargetPeerID)
+
+		if _, err = chat.StyledText(ctx, styling.Italic("Bot has started!")); nil != err {
+			switch {
+			case errutil.IsContext(ctx):
+				logger.Error().Msg("Failed to send bot startup message to specified target chat due to context cancellation")
+			default:
+				return fmt.Errorf("failed to send bot startup message to specified target chat: %v", err)
+			}
+		}
+
 		tidlAuth, err := auth.Load(ctx)
 		if nil != err {
 			switch {
@@ -217,7 +228,7 @@ func run(cliCtx *cli.Context) (err error) {
 				}
 			}
 
-			_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
+			_, err = chat.StyledText(
 				ctx,
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
@@ -225,6 +236,7 @@ func run(cliCtx *cli.Context) (err error) {
 				styling.Plain("\n"),
 				styling.Plain("Authorization link will expire in "),
 				styling.Code(authorization.ExpiresIn.String()),
+				styling.Plain("\n"),
 				styling.Plain("\n"),
 				styling.Italic("Waiting for authentication..."),
 			)
@@ -242,11 +254,7 @@ func run(cliCtx *cli.Context) (err error) {
 				case errors.Is(ctx.Err(), context.Canceled):
 					return context.Canceled
 				case errors.Is(err, auth.ErrAuthWaitTimeout):
-					_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
-						ctx,
-						styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again."),
-					)
-					if nil != err {
+					if _, err = chat.StyledText(ctx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
 						if errors.Is(ctx.Err(), context.Canceled) {
 							return context.Canceled
 						}
@@ -262,7 +270,7 @@ func run(cliCtx *cli.Context) (err error) {
 						styling.Plain("\n"),
 						styling.Plain("Restart the bot to initiate the authorization flow again."),
 					}
-					if _, err := w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, lines...); nil != err {
+					if _, err := chat.StyledText(ctx, lines...); nil != err {
 						if errors.Is(ctx.Err(), context.Canceled) {
 							return context.Canceled
 						}
@@ -275,7 +283,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 
 			logger.Info().Msg("TIDAL authentication was successful")
-			if _, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
+			if _, err := chat.StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
 				if errors.Is(ctx.Err(), context.Canceled) {
 					return context.Canceled
 				}
@@ -305,7 +313,19 @@ func run(cliCtx *cli.Context) (err error) {
 
 		logger.Info().Msg("Bot is running")
 		<-ctx.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 		logger.Debug().Msg("Stopping bot due to received signal")
+		if _, err = chat.StyledText(ctx, styling.Italic("Bot is shutting down...")); nil != err {
+			switch {
+			case errors.Is(ctx.Err(), context.Canceled):
+				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context cancellation")
+			case errors.Is(ctx.Err(), context.DeadlineExceeded):
+				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context deadline exceeded")
+			default:
+				return fmt.Errorf("failed to send bot shutdown message to specified target chat: %v", err)
+			}
+		}
 		return nil
 	})
 }
@@ -389,6 +409,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				styling.Plain("\n"),
 				styling.Plain("Authorization link will expire in "),
 				styling.Code(authorization.ExpiresIn.String()),
+				styling.Plain("\n"),
 				styling.Plain("\n"),
 				styling.Italic("Waiting for authentication..."),
 			}
