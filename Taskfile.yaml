@@ -39,7 +39,7 @@ tasks:
     cmd: |-
       go run \
         github.com/golangci/golangci-lint/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} \
-        run \
+        run {{ if .FIX }}--fix {{ end }}\
         --print-resources-usage \
         --out-format="{{.OUT_FORMAT}}"
 
@@ -48,6 +48,13 @@ tasks:
       - task: lint
         vars:
           OUT_FORMAT: colored-line-number
+
+  lint:local:fix:
+    cmds:
+      - task: lint
+        vars:
+          OUT_FORMAT: colored-line-number
+          FIX: true
 
   lint:ci:
     cmds:
