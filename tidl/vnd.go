@@ -92,26 +92,26 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 }
 
 func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodHead, d.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, d.URL, nil)
 	if nil != err {
 		return 0, fmt.Errorf("failed to create get track info request: %v", err)
 	}
-	request.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
 
 	client := http.Client{Timeout: 5 * time.Second} // TODO: set timeout to a reasonable value
-	response, err := client.Do(request)
+	resp, err := client.Do(req)
 	if nil != err {
 		return 0, fmt.Errorf("failed to send get track info request: %v", err)
 	}
 	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
+		if closeErr := resp.Body.Close(); nil != closeErr {
 			err = fmt.Errorf("failed to close get track info response body: %v", closeErr)
 		}
 	}()
 
-	switch code := response.StatusCode; code {
+	switch code := resp.StatusCode; code {
 	case http.StatusOK:
-		size, err := strconv.Atoi(response.Header.Get("Content-Length"))
+		size, err := strconv.Atoi(resp.Header.Get("Content-Length"))
 		if nil != err {
 			return 0, fmt.Errorf("failed to parse content length: %v", err)
 		}
@@ -124,20 +124,20 @@ func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
 }
 
 func (d *VndTrackStream) downloadRange(ctx context.Context, filePath string, idx, start, end int) (err error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL, nil)
 	if nil != err {
 		return fmt.Errorf("failed to create get track part request: %v", err)
 	}
-	request.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
-	request.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
 	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
-	response, err := client.Do(request)
+	resp, err := client.Do(req)
 	if nil != err {
 		return fmt.Errorf("failed to send get track part request: %v", err)
 	}
 	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
+		if closeErr := resp.Body.Close(); nil != closeErr {
 			err = fmt.Errorf("failed to close get track part response body: %v", closeErr)
 		}
 	}()
@@ -152,7 +152,7 @@ func (d *VndTrackStream) downloadRange(ctx context.Context, filePath string, idx
 		}
 	}()
 
-	if _, err := io.Copy(f, response.Body); nil != err {
+	if _, err := io.Copy(f, resp.Body); nil != err {
 		return fmt.Errorf("failed to write track part to file: %v", err)
 	}
 

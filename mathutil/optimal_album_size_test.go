@@ -4,10 +4,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 	"github.com/xeptore/tgtd/mathutil"
 )
 
 func TestOptimalAlbumSize(t *testing.T) {
+	t.Parallel()
+
 	assert.Exactly(t, 10, mathutil.OptimalAlbumSize(10))
 	assert.Exactly(t, 6, mathutil.OptimalAlbumSize(11))
 	assert.Exactly(t, 6, mathutil.OptimalAlbumSize(12))
