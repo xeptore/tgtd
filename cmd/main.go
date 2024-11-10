@@ -30,6 +30,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
 	"github.com/xeptore/flaw/v8"
+	"gopkg.in/matryer/try.v1"
 
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/constant"
@@ -769,17 +770,28 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
 
-		if err := downloader.Playlist(jobCtx, id); nil != err {
-			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
-				return err
-			case errors.Is(err, tidl.ErrTooManyRequests):
-				return tidl.ErrTooManyRequests
-			case errutil.IsFlaw(err):
-				return must.BeFlaw(err).Append(flawP)
-			default:
-				panic(errutil.UnknownError(err))
+		err = try.Do(func(attempt int) (retry bool, err error) {
+			const maxAttempts = 5
+			attemptRemained := attempt < maxAttempts
+			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			if err := downloader.Playlist(jobCtx, id); nil != err {
+				switch {
+				case errutil.IsContext(ctx):
+					return false, err
+				case errors.Is(err, context.DeadlineExceeded):
+					return attemptRemained, context.DeadlineExceeded
+				case errors.Is(err, tidl.ErrTooManyRequests):
+					return attemptRemained, tidl.ErrTooManyRequests
+				case errutil.IsFlaw(err):
+					return false, must.BeFlaw(err).Append(flawP)
+				default:
+					panic(errutil.UnknownError(err))
+				}
 			}
+			return false, nil
+		})
+		if nil != err {
+			return err
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting playlist upload")
@@ -817,17 +829,28 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
 
-		if err := downloader.Album(jobCtx, id); nil != err {
-			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
-				return err
-			case errors.Is(err, tidl.ErrTooManyRequests):
-				return tidl.ErrTooManyRequests
-			case errutil.IsFlaw(err):
-				return must.BeFlaw(err).Append(flawP)
-			default:
-				panic(errutil.UnknownError(err))
+		err = try.Do(func(attempt int) (retry bool, err error) {
+			const maxAttempts = 5
+			attemptRemained := attempt < maxAttempts
+			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			if err := downloader.Album(jobCtx, id); nil != err {
+				switch {
+				case errutil.IsContext(ctx):
+					return false, err
+				case errors.Is(err, context.DeadlineExceeded):
+					return attemptRemained, context.DeadlineExceeded
+				case errors.Is(err, tidl.ErrTooManyRequests):
+					return attemptRemained, tidl.ErrTooManyRequests
+				case errutil.IsFlaw(err):
+					return false, must.BeFlaw(err).Append(flawP)
+				default:
+					panic(errutil.UnknownError(err))
+				}
 			}
+			return false, nil
+		})
+		if nil != err {
+			return err
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting album upload")
@@ -861,17 +884,28 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
 
-		if err := downloader.Track(jobCtx, id); nil != err {
-			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
-				return err
-			case errors.Is(err, tidl.ErrTooManyRequests):
-				return tidl.ErrTooManyRequests
-			case errutil.IsFlaw(err):
-				return must.BeFlaw(err).Append(flawP)
-			default:
-				panic(errutil.UnknownError(err))
+		err = try.Do(func(attempt int) (retry bool, err error) {
+			const maxAttempts = 5
+			attemptRemained := attempt < maxAttempts
+			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			if err := downloader.Track(jobCtx, id); nil != err {
+				switch {
+				case errutil.IsContext(ctx):
+					return false, err
+				case errors.Is(err, context.DeadlineExceeded):
+					return attemptRemained, context.DeadlineExceeded
+				case errors.Is(err, tidl.ErrTooManyRequests):
+					return attemptRemained, tidl.ErrTooManyRequests
+				case errutil.IsFlaw(err):
+					return false, must.BeFlaw(err).Append(flawP)
+				default:
+					panic(errutil.UnknownError(err))
+				}
 			}
+			return false, nil
+		})
+		if nil != err {
+			return err
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting track upload")
@@ -905,17 +939,28 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			return flaw.From(fmt.Errorf("failed to send message: %w", err))
 		}
 
-		if err := downloader.Mix(jobCtx, id); nil != err {
-			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
-				return err
-			case errors.Is(err, tidl.ErrTooManyRequests):
-				return tidl.ErrTooManyRequests
-			case errutil.IsFlaw(err):
-				return must.BeFlaw(err).Append(flawP)
-			default:
-				panic(errutil.UnknownError(err))
+		err = try.Do(func(attempt int) (retry bool, err error) {
+			const maxAttempts = 5
+			attemptRemained := attempt < maxAttempts
+			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+			if err := downloader.Mix(jobCtx, id); nil != err {
+				switch {
+				case errutil.IsContext(ctx):
+					return false, err
+				case errors.Is(err, context.DeadlineExceeded):
+					return attemptRemained, context.DeadlineExceeded
+				case errors.Is(err, tidl.ErrTooManyRequests):
+					return attemptRemained, tidl.ErrTooManyRequests
+				case errutil.IsFlaw(err):
+					return false, must.BeFlaw(err).Append(flawP)
+				default:
+					panic(errutil.UnknownError(err))
+				}
 			}
+			return false, nil
+		})
+		if nil != err {
+			return err
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Download finished. Starting mix upload")
