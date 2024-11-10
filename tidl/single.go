@@ -194,7 +194,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		resBytes, err := io.ReadAll(resp.Body)
 		if nil != err && !errors.Is(err, io.EOF) {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get tracks page items response body: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to read get track response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
 		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
