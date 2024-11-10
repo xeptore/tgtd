@@ -17,8 +17,8 @@ func (e ErrInfo) FlawP() flaw.P {
 	var ch []flaw.P
 	if len(e.Children) > 0 {
 		ch := make([]flaw.P, 0, len(e.Children))
-		for _, child := range e.Children {
-			ch = append(ch, child.FlawP())
+		for i, child := range e.Children {
+			ch[i] = child.FlawP()
 		}
 	}
 
@@ -35,6 +35,7 @@ func Tree(err error) ErrInfo {
 		panic("nil error")
 	}
 
+	//nolint:errorlint
 	switch x := err.(type) {
 	case interface{ Unwrap() error }:
 		var children []ErrInfo
@@ -42,9 +43,10 @@ func Tree(err error) ErrInfo {
 			children = []ErrInfo{Tree(err)}
 		}
 		return ErrInfo{
-			Message:  err.Error(),
-			TypeName: fmt.Sprintf("%T", err),
-			Children: children,
+			Message:    err.Error(),
+			TypeName:   fmt.Sprintf("%T", err),
+			SyntaxRepr: fmt.Sprintf("%+#v", err),
+			Children:   children,
 		}
 	case interface{ Unwrap() []error }:
 		errs := x.Unwrap()
