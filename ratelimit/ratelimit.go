@@ -6,10 +6,10 @@ import (
 )
 
 const (
-	AlbumDownloadConcurrency    = 7
-	AlbumUploadConcurrency      = 10
-	PlaylistDownloadConcurrency = 7
-	MixDownloadConcurrency      = 7
+	AlbumDownloadConcurrency    = 3
+	AlbumUploadConcurrency      = 8
+	PlaylistDownloadConcurrency = 3
+	MixDownloadConcurrency      = 3
 )
 
 func TrackDownloadSleepMS() time.Duration {
