@@ -174,6 +174,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		}
 		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
+	case http.StatusTooManyRequests:
+		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		ok, err := errutil.IsTooManyErrorResponse(resp)
 		if nil != err {

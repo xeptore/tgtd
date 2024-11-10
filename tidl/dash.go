@@ -237,6 +237,8 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		}
 		flawP["response_body"] = string(resBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return ErrTooManyRequests
 	case http.StatusForbidden:
 		ok, err := errutil.IsTooManyErrorResponse(resp)
 		if nil != err {

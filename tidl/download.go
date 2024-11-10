@@ -191,6 +191,8 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 		}
 		flawP["response_body"] = string(resBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return ErrTooManyRequests
 	case http.StatusForbidden:
 		ok, err := errutil.IsTooManyErrorResponse(resp)
 		if nil != err {
@@ -324,6 +326,8 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		}
 		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		ok, err := errutil.IsTooManyErrorResponse(resp)
 		if nil != err {
