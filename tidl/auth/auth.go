@@ -443,6 +443,8 @@ func NewAuthorizer(ctx context.Context) (link string, wait <-chan result.Of[Auth
 					case errutil.IsFlaw(err):
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 						done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
+					default:
+						panic(errutil.UnknownError(err))
 					}
 				}
 				f := File(*creds)
