@@ -50,9 +50,11 @@ func (d *Downloader) preparePlaylistDir(id string, tracks []PlaylistTrack) error
 	playlistDir := path.Join(d.basePath, playlistTrackDir(id))
 	flawP := flaw.P{"playlist_dir": playlistDir}
 	if err := os.RemoveAll(playlistDir); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to delete possibly existing playlist directory: %v", err)).Append(flawP)
 	}
 	if err := os.MkdirAll(playlistDir, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create playlist directory: %v", err)).Append(flawP)
 	}
 
@@ -60,12 +62,15 @@ func (d *Downloader) preparePlaylistDir(id string, tracks []PlaylistTrack) error
 	flawP["info_file_path"] = infoFilePath
 	f, err := os.OpenFile(infoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create playlist info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(tracks); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode playlist info: %v", err)).Append(flawP)
 	}
 	if err := f.Sync(); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to sync playlist info file: %v", err)).Append(flawP)
 	}
 	return nil
@@ -186,7 +191,8 @@ func (r *PlaylistResponseItem) FlawP() flaw.P {
 func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int) (tracks []PlaylistTrack, remaining int, err error) {
 	playlistURL, err := url.JoinPath(fmt.Sprintf(playlistItemsAPIFormat, id))
 	if nil != err {
-		return nil, 0, flaw.From(fmt.Errorf("failed to create playlist URL: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, 0, flaw.From(fmt.Errorf("failed to create playlist URL: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"url": playlistURL}
 
@@ -205,6 +211,7 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get playlist page items response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
@@ -232,6 +239,7 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, 0, context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 		}
 	}

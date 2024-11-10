@@ -7,6 +7,7 @@ import (
 
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/sliceutil"
 )
 
@@ -166,7 +167,8 @@ func ParseStreamInfo(r io.Reader) (*StreamInfo, error) {
 	dec := xml.NewDecoder(r)
 	dec.Strict = true
 	if err := dec.Decode(&mpd); nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to parse MPD: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to parse MPD: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"parsed_mpd": mpd.flawP()}
 

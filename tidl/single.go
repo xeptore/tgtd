@@ -58,6 +58,7 @@ func (t *SingleTrack) createDir(basePath string) error {
 	flawP := flaw.P{"file_path": dirPath}
 
 	if err := os.MkdirAll(dirPath, 0o755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track directory: %v", err)).Append(flawP)
 	}
 	return nil
@@ -87,6 +88,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	flawP := flaw.P{"url": trackURL}
 	reqURL, err := url.Parse(trackURL)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to parse track URL: %v", err)).Append(flawP)
 	}
 
@@ -100,6 +102,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
@@ -113,11 +116,13 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 		}
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get track info response body: %v", closeErr))
 			switch {
 			case nil == err:
@@ -152,6 +157,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			case errors.Is(err, context.DeadlineExceeded):
 				return nil, context.DeadlineExceeded
 			default:
+				flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 				return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 			}
 		}
@@ -160,6 +166,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		}
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -167,6 +174,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	default:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -193,6 +201,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 		}
 	}

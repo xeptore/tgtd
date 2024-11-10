@@ -91,11 +91,13 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 		0o0644,
 	)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to create track info file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to create track info file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr
@@ -108,11 +110,13 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 	}()
 
 	if err := json.NewEncoder(f).Encode(t.info()); nil != err {
-		return flaw.From(fmt.Errorf("failed to write track info: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to write track info: %v", err)).Append(flawP)
 	}
 
 	if err := f.Sync(); nil != err {
-		return flaw.From(fmt.Errorf("failed to sync track info file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to sync track info file: %v", err)).Append(flawP)
 	}
 
 	return nil
@@ -121,7 +125,8 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	coverURL, err := url.JoinPath(fmt.Sprintf(coverURLFormat, strings.ReplaceAll(t.cover(), "-", "/")))
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to join cover base URL with cover path: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to join cover base URL with cover path: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"cover_url": coverURL}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
@@ -129,6 +134,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create get cover request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
@@ -142,11 +148,13 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 		case errors.Is(err, context.DeadlineExceeded):
 			return context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to send get cover request: %v", err)).Append(flawP)
 		}
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get cover response body: %v", closeErr))
 			switch {
 			case nil == err:
@@ -169,6 +177,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	case http.StatusUnauthorized:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -176,6 +185,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	default:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -196,11 +206,13 @@ func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
 		0o0644,
 	)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to create track cover file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to create track cover file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close track cover file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close track cover file: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr
@@ -220,11 +232,13 @@ func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
 		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
 			return err
 		}
-		return flaw.From(fmt.Errorf("failed to write track cover: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to write track cover: %v", err)).Append(flawP)
 	}
 
 	if err := f.Sync(); nil != err {
-		return flaw.From(fmt.Errorf("failed to sync track cover file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to sync track cover file: %v", err)).Append(flawP)
 	}
 
 	return nil
@@ -233,7 +247,8 @@ func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
 func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page int) (*http.Response, error) {
 	reqURL, err := url.Parse(itemsURL)
 	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to parse items URL: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to parse items URL: %v", err)).Append(flawP)
 	}
 	params := make(url.Values, 3)
 	params.Add("countryCode", "US")
@@ -246,6 +261,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
@@ -259,6 +275,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
 		}
 	}
@@ -269,6 +286,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	case http.StatusUnauthorized:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -276,6 +294,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	default:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)

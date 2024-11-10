@@ -26,11 +26,11 @@ type DashTrackStream struct {
 }
 
 func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err error) {
-	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(-1)
-
 	numBatches := mathutil.CeilInts(d.Info.Parts.Count, maxBatchParts)
 	flawP := flaw.P{"num_batches": numBatches}
+
+	wg, wgCtx := errgroup.WithContext(ctx)
+	wg.SetLimit(numBatches)
 	for i := range numBatches {
 		wg.Go(func() error {
 			if err := d.downloadBatch(wgCtx, fileName, i); nil != err {
@@ -64,10 +64,12 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 
 	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close track file: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
@@ -92,6 +94,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 	}
 
 	if err := f.Sync(); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to sync track file: %v", err)).Append(flawP)
 	}
 
@@ -101,11 +104,13 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 func (d *DashTrackStream) writePartToTrackFile(f *os.File, partFileName string) (err error) {
 	fp, err := os.OpenFile(partFileName, os.O_RDONLY, 0o0644)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to open track part file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to open track part file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := fp.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
 			} else {
@@ -115,11 +120,13 @@ func (d *DashTrackStream) writePartToTrackFile(f *os.File, partFileName string) 
 	}()
 
 	if _, err := io.Copy(f, fp); nil != err {
-		return flaw.From(fmt.Errorf("failed to copy track part to track file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to copy track part to track file: %v", err)).Append(flawP)
 	}
 
 	if err := os.Remove(partFileName); nil != err {
-		return flaw.From(fmt.Errorf("failed to remove track part file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to remove track part file: %v", err)).Append(flawP)
 	}
 
 	return nil
@@ -132,11 +139,13 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 		0o644,
 	)
 	if nil != err {
-		return flaw.From(fmt.Errorf("failed to create track part file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to create track part file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr
@@ -154,9 +163,11 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 
 	start := idx * maxBatchParts
 	end := min(d.Info.Parts.Count, (idx+1)*maxBatchParts)
+
 	flawP := flaw.P{"start_part_index": start, "end_part_index": end}
 	loopFlawPs := make([]flaw.P, end-start)
 	flawP["loop_flaws"] = loopFlawPs
+
 	for i := range end - start {
 		segmentIdx := start + i
 		loopFlawP := flaw.P{"segment_index": segmentIdx}
@@ -186,7 +197,8 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
-		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
 	}
 	request.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
 	flawP := flaw.P{}
@@ -200,6 +212,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		case errors.Is(err, context.DeadlineExceeded):
 			return context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to send get track part request: %v", err)).Append(flawP)
 		}
 	}
@@ -210,6 +223,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	case http.StatusUnauthorized:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -217,6 +231,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	default:
 		resBytes, err := io.ReadAll(response.Body)
 		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
@@ -225,6 +240,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get track part response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
@@ -243,6 +259,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to write track part to file: %v", err)).Append(flawP)
 	} else if n == 0 {
 		return flaw.From(errors.New("empty track part")).Append(flawP)

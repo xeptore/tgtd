@@ -6,7 +6,7 @@ import (
 	"github.com/xeptore/tgtd/ratelimit"
 )
 
-func Test_TrackDownloadSleepMS(t *testing.T) {
+func TestTrackDownloadSleepMS(t *testing.T) {
 	t.Parallel()
 	for range 100 {
 		ms := ratelimit.TrackDownloadSleepMS().Milliseconds()

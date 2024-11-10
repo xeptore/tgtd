@@ -48,21 +48,26 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 func (d *Downloader) prepareMixDir(id string, tracks []MixTrack) error {
 	mixDir := path.Join(d.basePath, mixTrackDir(id))
 	if err := os.RemoveAll(mixDir); nil != err {
-		return flaw.From(fmt.Errorf("failed to delete possibly existing mix directory: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return flaw.From(fmt.Errorf("failed to delete possibly existing mix directory: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"mix_dir": mixDir}
 	if err := os.MkdirAll(mixDir, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create mix directory: %v", err)).Append(flawP)
 	}
 
 	f, err := os.OpenFile(path.Join(mixDir, "info.json"), os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(tracks); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode mix info: %v", err)).Append(flawP)
 	}
 	if err := f.Close(); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to close mix info file: %v", err)).Append(flawP)
 	}
 	return nil
@@ -114,7 +119,8 @@ func (t *MixTrack) info() TrackInfo {
 func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tracks []MixTrack, remaining int, err error) {
 	mixURL, err := url.JoinPath(fmt.Sprintf(mixItemsAPIFormat, id))
 	if nil != err {
-		return nil, 0, flaw.From(fmt.Errorf("failed to create mix URL: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, 0, flaw.From(fmt.Errorf("failed to create mix URL: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"mix_url": mixURL}
 
@@ -133,6 +139,7 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 	}
 	defer func() {
 		if closeErr := response.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get mix page items response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
@@ -177,6 +184,7 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, 0, context.DeadlineExceeded
 		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 		}
 	}

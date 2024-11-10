@@ -8,6 +8,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 )
@@ -57,11 +58,13 @@ func (d *Downloader) Track(ctx context.Context, id string) error {
 func ReadTrackInfoFile(fileName string) (info *TrackInfo, err error) {
 	file, err := os.Open(fileName + ".json")
 	if nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to open track info file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to open track info file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := file.Close(); nil != closeErr {
-			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr))
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
 			} else {
@@ -72,7 +75,8 @@ func ReadTrackInfoFile(fileName string) (info *TrackInfo, err error) {
 
 	var trackInfo TrackInfo
 	if err := json.NewDecoder(file).Decode(&trackInfo); nil != err {
-		return nil, flaw.From(fmt.Errorf("failed to decode track info file: %v", err))
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to decode track info file: %v", err)).Append(flawP)
 	}
 	return &trackInfo, nil
 }

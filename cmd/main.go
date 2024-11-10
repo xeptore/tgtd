@@ -333,7 +333,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				if errors.Is(ctx.Err(), context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 			}
 			return nil
 		}
@@ -350,7 +351,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -365,7 +367,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(ctx.Err(), context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -375,7 +378,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(ctx.Err(), context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -394,7 +398,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				if errors.Is(ctx.Err(), context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 				return nil
 			}
 
@@ -409,7 +414,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(err)).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -418,7 +424,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -433,7 +440,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -448,7 +456,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 				return nil
 			}
 			return nil
@@ -469,7 +478,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 							if errors.Is(err, context.Canceled) {
 								return nil
 							}
-							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+							flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+							w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 							return nil
 						}
 						return nil
@@ -480,7 +490,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -496,7 +507,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -513,7 +525,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						if errors.Is(err, context.Canceled) {
 							return nil
 						}
-						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 						return nil
 					}
 					return nil
@@ -527,7 +540,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				}
 				upload, err := w.uploader.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
 				if nil != err {
-					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to upload flaw to TOML")
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to TOML")
 					return nil
 				}
 				document := message.UploadedDocument(upload)
@@ -545,7 +559,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					if errors.Is(err, context.Canceled) {
 						return nil
 					}
-					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 					return nil
 				}
 				return nil
@@ -564,7 +579,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					if errors.Is(err, context.Canceled) {
 						return nil
 					}
-					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 					return nil
 				}
 				return nil
@@ -574,7 +590,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
-				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Failed to send reply")
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 				return nil
 			}
 		}
