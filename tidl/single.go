@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
@@ -97,7 +98,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	reqURL.RawQuery = params.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
@@ -105,10 +106,10 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}
-	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
+	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
 	client := http.Client{Timeout: 5 * time.Second} //nolint:exhaustruct
-	response, err := client.Do(request)
+	resp, err := client.Do(req)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -121,7 +122,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		}
 	}
 	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
+		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get track info response body: %v", closeErr)).Append(flawP)
 			switch {
@@ -133,6 +134,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
 			case errors.Is(err, auth.ErrUnauthorized):
 				err = flaw.From(errors.New("unauthorized")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:
@@ -140,9 +143,9 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			}
 		}
 	}()
-	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	switch code := response.StatusCode; code {
+	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
 		var responseBody struct {
@@ -150,7 +153,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			SubStatus   int    `json:"subStatus"`
 			UserMessage string `json:"userMessage"`
 		}
-		if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
+		if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
 			switch {
 			case errutil.IsContext(ctx):
 				return nil, ctx.Err()
@@ -164,15 +167,39 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return nil, auth.ErrUnauthorized
 		}
-		resBytes, err := io.ReadAll(response.Body)
+		resBytes, err := io.ReadAll(resp.Body)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
+	case http.StatusForbidden:
+		ok, err := errutil.IsTooManyErrorResponse(resp)
+		if nil != err {
+			switch {
+			case errutil.IsContext(ctx):
+				return nil, ctx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			case errutil.IsFlaw(err):
+				return nil, err
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+		if ok {
+			return nil, ErrTooManyRequests
+		}
+		resBytes, err := io.ReadAll(resp.Body)
+		if nil != err && !errors.Is(err, io.EOF) {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read get track response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
+		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(response.Body)
+		resBytes, err := io.ReadAll(resp.Body)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
@@ -194,7 +221,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		} `json:"album"`
 		Version *string `json:"version"`
 	}
-	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
+	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
 		switch {
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -39,6 +40,8 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 					return ctx.Err()
 				case errors.Is(err, context.DeadlineExceeded):
 					return context.DeadlineExceeded
+				case errors.Is(err, ErrTooManyRequests):
+					return ErrTooManyRequests
 				case errutil.IsFlaw(err):
 					return must.BeFlaw(err).Append(flawP)
 				default:
@@ -55,6 +58,8 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 			return ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
 			return context.DeadlineExceeded
+		case errors.Is(err, ErrTooManyRequests):
+			return ErrTooManyRequests
 		case errutil.IsFlaw(err):
 			return must.BeFlaw(err).Append(flawP)
 		default:
@@ -153,6 +158,8 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 				err = flaw.From(errors.New("context was ended")).Join(closeErr)
 			case errors.Is(err, context.DeadlineExceeded):
 				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:
@@ -180,6 +187,8 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 				return ctx.Err()
 			case errors.Is(err, context.DeadlineExceeded):
 				return context.DeadlineExceeded
+			case errors.Is(err, ErrTooManyRequests):
+				return ErrTooManyRequests
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
 			default:
@@ -192,7 +201,7 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 }
 
 func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *os.File) (err error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
@@ -200,11 +209,11 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
 	}
-	request.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
 	flawP := flaw.P{}
 
 	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
-	response, err := client.Do(request)
+	resp, err := client.Do(req)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -216,20 +225,44 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 			return flaw.From(fmt.Errorf("failed to send get track part request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	switch status := response.StatusCode; status {
+	switch status := resp.StatusCode; status {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		resBytes, err := io.ReadAll(response.Body)
+		resBytes, err := io.ReadAll(resp.Body)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
 		}
 		flawP["response_body"] = string(resBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusForbidden:
+		ok, err := errutil.IsTooManyErrorResponse(resp)
+		if nil != err {
+			switch {
+			case errutil.IsContext(ctx):
+				return ctx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return context.DeadlineExceeded
+			case errutil.IsFlaw(err):
+				return err
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+		if ok {
+			return ErrTooManyRequests
+		}
+		resBytes, err := io.ReadAll(resp.Body)
+		if nil != err && !errors.Is(err, io.EOF) {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to read get stream segment response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
+		return flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(response.Body)
+		resBytes, err := io.ReadAll(resp.Body)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
@@ -239,7 +272,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	}
 
 	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
+		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close get track part response body: %v", closeErr)).Append(flawP)
 			switch {
@@ -255,7 +288,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		}
 	}()
 
-	if n, err := io.Copy(f, response.Body); nil != err {
+	if n, err := io.Copy(f, resp.Body); nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}

@@ -1,9 +1,9 @@
 package mathutil
 
 func OptimalAlbumSize(total int) int {
-	const max = 10
-	numAlbums := total / max // 10%1
-	if total%max != 0 {
+	const maxsize = 10
+	numAlbums := total / maxsize // 10%1
+	if total%maxsize != 0 {
 		numAlbums++
 	}
 	if total%numAlbums == 0 {

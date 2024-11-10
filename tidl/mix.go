@@ -131,6 +131,8 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 			return nil, 0, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, 0, context.DeadlineExceeded
+		case errors.Is(err, ErrTooManyRequests):
+			return nil, 0, ErrTooManyRequests
 		case errutil.IsFlaw(err):
 			return nil, 0, must.BeFlaw(err).Append(flawP)
 		default:
@@ -229,6 +231,8 @@ func (d *Downloader) mixTracks(ctx context.Context, id string) ([]MixTrack, erro
 				break
 			case errors.Is(err, context.DeadlineExceeded):
 				return nil, context.DeadlineExceeded
+			case errors.Is(err, ErrTooManyRequests):
+				return nil, ErrTooManyRequests
 			case errutil.IsFlaw(err):
 				return nil, must.BeFlaw(err).Append(flawP)
 			default:

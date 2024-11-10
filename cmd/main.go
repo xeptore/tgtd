@@ -525,6 +525,16 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						return nil
 					}
 					return nil
+				case errors.Is(err, tidl.ErrTooManyRequests):
+					if _, err := reply.StyledText(ctx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
+						if errors.Is(err, context.Canceled) {
+							return nil
+						}
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+						w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+						return nil
+					}
+					return nil
 				}
 				// handling the rest of possible error types that are not supported by switch/case syntactically.
 				if errInvalidLink := new(InvalidLinkError); errors.As(err, &errInvalidLink) {
@@ -763,6 +773,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
+			case errors.Is(err, tidl.ErrTooManyRequests):
+				return tidl.ErrTooManyRequests
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
 			default:
@@ -809,6 +821,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
+			case errors.Is(err, tidl.ErrTooManyRequests):
+				return tidl.ErrTooManyRequests
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
 			default:
@@ -851,6 +865,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
+			case errors.Is(err, tidl.ErrTooManyRequests):
+				return tidl.ErrTooManyRequests
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
 			default:
@@ -893,6 +909,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
+			case errors.Is(err, tidl.ErrTooManyRequests):
+				return tidl.ErrTooManyRequests
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
 			default:
