@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gotd/contrib/bg"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/message"
@@ -160,160 +159,146 @@ func run(cliCtx *cli.Context) (err error) {
 	)
 	logger.Debug().Msg("Telegram client initialized.")
 
-	stop, err := bg.Connect(client)
-	if nil != err {
-		return fmt.Errorf("failed to connect to telegram: %v", err)
-	}
-	logger.Debug().Msg("Telegram client connected.")
-	defer func() {
-		logger.Debug().Msg("Stopping Telegram bot")
-		if stopErr := stop(); nil != stopErr {
-			err = fmt.Errorf("failed to stop Telegram background connection: %v", stopErr)
-			return
-		}
-		logger.Debug().Msg("Telegram bot has stopped")
-	}()
-
-	status, err := client.Auth().Status(ctx)
-	if nil != err {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return context.Canceled
-		}
-		return fmt.Errorf("failed to get Telegram client auth status: %v", err)
-	}
-	if !status.Authorized {
-		if _, authErr := client.Auth().Bot(ctx, botToken); nil != authErr {
+	return client.Run(ctx, func(ctx context.Context) error {
+		status, err := client.Auth().Status(ctx)
+		if nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
 			}
-			return fmt.Errorf("failed to authorize Telegram bot: %v", authErr)
+			return fmt.Errorf("failed to get Telegram client auth status: %v", err)
 		}
-		logger.Debug().Msg("Telegram client authorized.")
-	} else {
-		logger.Debug().Msg("Telegram client has already been authorized.")
-	}
-
-	api := tg.NewClient(client)
-	w.uploader = uploader.NewUploader(api)
-	w.sender = message.NewSender(api).WithUploader(w.uploader)
-
-	tidlAuth, err := auth.Load(ctx)
-	if nil != err {
-		switch {
-		case errors.Is(ctx.Err(), context.Canceled):
-			return context.Canceled
-		case errors.Is(err, context.DeadlineExceeded):
-			return fmt.Errorf("failed to load TIDAL auth due to deadline exceeded: %v", err)
-		case errors.Is(err, auth.ErrUnauthorized):
-			// continue as we're gonna kick off the authorization flow
-		case errutil.IsFlaw(err):
-			return err
-		default:
-			panic(errutil.UnknownError(err))
+		if !status.Authorized {
+			if _, authErr := client.Auth().Bot(ctx, botToken); nil != authErr {
+				if errors.Is(ctx.Err(), context.Canceled) {
+					return context.Canceled
+				}
+				return fmt.Errorf("failed to authorize Telegram bot: %v", authErr)
+			}
+			logger.Debug().Msg("Telegram client authorized.")
+		} else {
+			logger.Debug().Msg("Telegram client has already been authorized.")
 		}
 
-		logger.Debug().Msg("Need to authenticate TIDAL. Initiating TIDAL authorization flow")
-		link, wait, err := auth.NewAuthorizer(ctx)
+		api := tg.NewClient(client)
+		w.uploader = uploader.NewUploader(api)
+		w.sender = message.NewSender(api).WithUploader(w.uploader)
+
+		tidlAuth, err := auth.Load(ctx)
 		if nil != err {
 			switch {
 			case errors.Is(ctx.Err(), context.Canceled):
 				return context.Canceled
 			case errors.Is(err, context.DeadlineExceeded):
-				return fmt.Errorf("failed to initialize TIDAL authorizer due to deadline exceeded: %v", err)
+				return fmt.Errorf("failed to load TIDAL auth due to deadline exceeded: %v", err)
+			case errors.Is(err, auth.ErrUnauthorized):
+				// continue as we're gonna kick off the authorization flow
 			case errutil.IsFlaw(err):
 				return err
 			default:
 				panic(errutil.UnknownError(err))
 			}
-		}
 
-		_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
-			ctx,
-			styling.Plain("Please visit the following link to authorize the application:"),
-			styling.Plain("\n"),
-			styling.URL(link),
-			styling.Plain("\n"),
-			styling.Italic("Waiting for authentication..."),
-		)
-		if nil != err {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return context.Canceled
+			logger.Debug().Msg("Need to authenticate TIDAL. Initiating TIDAL authorization flow")
+			link, wait, err := auth.NewAuthorizer(ctx)
+			if nil != err {
+				switch {
+				case errors.Is(ctx.Err(), context.Canceled):
+					return context.Canceled
+				case errors.Is(err, context.DeadlineExceeded):
+					return fmt.Errorf("failed to initialize TIDAL authorizer due to deadline exceeded: %v", err)
+				case errutil.IsFlaw(err):
+					return err
+				default:
+					panic(errutil.UnknownError(err))
+				}
 			}
-			return fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err)
+
+			_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
+				ctx,
+				styling.Plain("Please visit the following link to authorize the application:"),
+				styling.Plain("\n"),
+				styling.URL(link),
+				styling.Plain("\n"),
+				styling.Italic("Waiting for authentication..."),
+			)
+			if nil != err {
+				if errors.Is(ctx.Err(), context.Canceled) {
+					return context.Canceled
+				}
+				return fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err)
+			}
+
+			logger.Info().Msg("Waiting for TIDAL authentication")
+			res := <-wait
+			if err := res.Err(); nil != err {
+				switch {
+				case errors.Is(ctx.Err(), context.Canceled):
+					return context.Canceled
+				case errors.Is(err, auth.ErrAuthWaitTimeout):
+					_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
+						ctx,
+						styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again."),
+					)
+					if nil != err {
+						if errors.Is(ctx.Err(), context.Canceled) {
+							return context.Canceled
+						}
+						return fmt.Errorf("failed to send TIDAL authentication URL expired message to specified target chat: %v", err)
+					}
+					return errors.New("TIDAL authorization URL expired")
+				case errutil.IsFlaw(err):
+					logger.Error().Func(log.Flaw(err)).Msg("TIDAL authentication failed")
+					lines := []styling.StyledTextOption{
+						styling.Plain("TIDAL authentication failed:"),
+						styling.Plain("\n"),
+						styling.Code(err.Error()),
+						styling.Plain("\n"),
+						styling.Plain("Restart the bot to initiate the authorization flow again."),
+					}
+					if _, err := w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, lines...); nil != err {
+						if errors.Is(ctx.Err(), context.Canceled) {
+							return context.Canceled
+						}
+						return fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err)
+					}
+					return err
+				default:
+					panic(errutil.UnknownError(err))
+				}
+			}
+
+			logger.Info().Msg("TIDAL authentication was successful")
+			if _, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
+				if errors.Is(ctx.Err(), context.Canceled) {
+					return context.Canceled
+				}
+				return fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err)
+			}
+			tidlAuth = res.Unwrap()
 		}
 
-		logger.Info().Msg("Waiting for TIDAL authentication")
-		res := <-wait
-		if err := res.Err(); nil != err {
+		if err := tidlAuth.VerifyAccessToken(ctx); nil != err {
 			switch {
 			case errors.Is(ctx.Err(), context.Canceled):
 				return context.Canceled
-			case errors.Is(err, auth.ErrAuthWaitTimeout):
-				_, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(
-					ctx,
-					styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again."),
-				)
-				if nil != err {
-					if errors.Is(ctx.Err(), context.Canceled) {
-						return context.Canceled
-					}
-					return fmt.Errorf("failed to send TIDAL authentication URL expired message to specified target chat: %v", err)
-				}
-				return errors.New("TIDAL authorization URL expired")
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("failed to verify TIDAL access token due to deadline exceeded: %v", err)
+			case errors.Is(err, auth.ErrUnauthorized):
+				return errors.New("TIDAL authentication expired. Please reauthorize the application")
 			case errutil.IsFlaw(err):
-				logger.Error().Func(log.Flaw(err)).Msg("TIDAL authentication failed")
-				lines := []styling.StyledTextOption{
-					styling.Plain("TIDAL authentication failed:"),
-					styling.Plain("\n"),
-					styling.Code(err.Error()),
-					styling.Plain("\n"),
-					styling.Plain("Restart the bot to initiate the authorization flow again."),
-				}
-				if _, err := w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, lines...); nil != err {
-					if errors.Is(ctx.Err(), context.Canceled) {
-						return context.Canceled
-					}
-					return fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err)
-				}
 				return err
 			default:
 				panic(errutil.UnknownError(err))
 			}
 		}
 
-		logger.Info().Msg("TIDAL authentication was successful")
-		if _, err = w.sender.Resolve(cfg.TargetPeerID).StyledText(ctx, styling.Bold("TIDAL authentication was successful!")); nil != err {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return context.Canceled
-			}
-			return fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err)
-		}
-		tidlAuth = res.Unwrap()
-	}
+		logger.Debug().Msg("TIDAL access token verified")
+		w.tidlAuth = tidlAuth
+		d.OnNewMessage(buildOnMessage(w))
 
-	if err := tidlAuth.VerifyAccessToken(ctx); nil != err {
-		switch {
-		case errors.Is(ctx.Err(), context.Canceled):
-			return context.Canceled
-		case errors.Is(err, context.DeadlineExceeded):
-			return fmt.Errorf("failed to verify TIDAL access token due to deadline exceeded: %v", err)
-		case errors.Is(err, auth.ErrUnauthorized):
-			return errors.New("TIDAL authentication expired. Please reauthorize the application")
-		case errutil.IsFlaw(err):
-			return err
-		default:
-			panic(errutil.UnknownError(err))
-		}
-	}
-
-	logger.Debug().Msg("TIDAL access token verified")
-	w.tidlAuth = tidlAuth
-	d.OnNewMessage(buildOnMessage(w))
-
-	logger.Info().Msg("Bot is running")
-	<-ctx.Done()
-	logger.Debug().Msg("Stopping bot due to received signal")
-	return nil
+		logger.Info().Msg("Bot is running")
+		return nil
+	})
 }
 
 func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
