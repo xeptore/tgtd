@@ -94,6 +94,9 @@ func main() {
 }
 
 func run(cliCtx *cli.Context) (err error) {
+	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	logger := log.NewPretty(os.Stdout).Level(zerolog.TraceLevel)
 	var (
 		appHash  = os.Getenv("APP_HASH")
@@ -156,9 +159,6 @@ func run(cliCtx *cli.Context) (err error) {
 		},
 	)
 	logger.Debug().Msg("Telegram client initialized.")
-
-	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	stop, err := bg.Connect(client)
 	if nil != err {
