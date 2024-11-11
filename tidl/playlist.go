@@ -266,7 +266,7 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: config.PlaylistInfoRequestTimeout}
+	client := http.Client{Timeout: config.PlaylistInfoRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

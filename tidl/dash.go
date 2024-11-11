@@ -215,7 +215,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 
 	flawP := flaw.P{}
 
-	client := http.Client{Timeout: config.DashSegmentDownloadTimeout}
+	client := http.Client{Timeout: config.DashSegmentDownloadTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

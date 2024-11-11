@@ -49,7 +49,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: config.GetStreamURLsRequestTimeout}
+	client := http.Client{Timeout: config.GetStreamURLsRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

@@ -147,7 +147,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: config.CoverDownloadTimeout}
+	client := http.Client{Timeout: config.CoverDownloadTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
@@ -286,7 +286,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: config.GetPageTracksRequestTimeout}
+	client := http.Client{Timeout: config.GetPageTracksRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

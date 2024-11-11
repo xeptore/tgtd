@@ -188,7 +188,7 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 	req.Header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0")
 	req.Header.Add("Accept", "application/json")
 
-	client := http.Client{Timeout: config.MixInfoRequestTimeout}
+	client := http.Client{Timeout: config.MixInfoRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

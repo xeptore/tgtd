@@ -157,7 +157,7 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: config.AlbumInfoRequestTimeout}
+	client := http.Client{Timeout: config.AlbumInfoRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
