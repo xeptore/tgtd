@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/BurntSushi/toml"
 	"github.com/xeptore/flaw/v8"
+	"gopkg.in/yaml.v3"
 )
 
 func HTTPResponseFlawPayload(res *http.Response) flaw.P {
@@ -49,7 +49,7 @@ type StackTrace struct {
 	Function string `toml:"function"`
 }
 
-func FlawToTOML(f *flaw.Flaw) ([]byte, error) {
+func FlawToYAML(f *flaw.Flaw) ([]byte, error) {
 	records := make([]Record, len(f.Records))
 	for i, v := range f.Records {
 		records[i] = Record{
@@ -90,9 +90,9 @@ func FlawToTOML(f *flaw.Flaw) ([]byte, error) {
 		StackTrace:   stackTraces,
 	}
 	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(fl); err != nil {
+	if err := yaml.NewEncoder(&buf).Encode(fl); err != nil {
 		flawP := flaw.P{"err_debug_tree": Tree(err).FlawP()}
-		return nil, flaw.From(fmt.Errorf("failed to encode flaw to toml: %v", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to encode flaw to yaml: %v", err)).Append(flawP)
 	}
 
 	return buf.Bytes(), nil

@@ -3,7 +3,6 @@ module github.com/xeptore/tgtd
 go 1.23.3
 
 require (
-	github.com/BurntSushi/toml v1.4.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/goccy/go-json v0.10.3
 	github.com/gotd/td v0.111.2
