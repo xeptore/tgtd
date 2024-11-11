@@ -331,13 +331,14 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 		}
 	}
 
-	createdAt, err := time.Parse(time.RFC3339, respBody.Created)
+	const dateLayout = "2006-01-02T15:04:05.000-0700"
+	createdAt, err := time.Parse(dateLayout, respBody.Created)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to parse playlist created date: %v", err)).Append(flawP)
 	}
 
-	lastUpdatedAt, err := time.Parse(time.RFC3339, respBody.LastUpdated)
+	lastUpdatedAt, err := time.Parse(dateLayout, respBody.LastUpdated)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to parse playlist last updated date: %v", err)).Append(flawP)
