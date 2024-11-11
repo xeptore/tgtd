@@ -172,7 +172,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 			styling.Plain(" "),
 			styling.Plain(fmt.Sprintf("[%d - %d]", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
 			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", i, numBatches)),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
@@ -207,7 +207,7 @@ func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
 		caption := []styling.StyledTextOption{
 			styling.Plain(mix.Title),
 			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", i, numBatches)),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
