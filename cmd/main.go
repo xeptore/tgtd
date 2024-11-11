@@ -34,6 +34,7 @@ import (
 
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/constant"
+	"github.com/xeptore/tgtd/ctxutil"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/log"
 	"github.com/xeptore/tgtd/must"
@@ -98,6 +99,9 @@ func main() {
 
 func run(cliCtx *cli.Context) (err error) {
 	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	msgCtx, cancel := ctxutil.WithDelayedTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	logger := log.NewPretty(os.Stdout).Level(zerolog.TraceLevel)
@@ -191,9 +195,9 @@ func run(cliCtx *cli.Context) (err error) {
 
 		chat := w.sender.Resolve(cfg.TargetPeerID)
 
-		if _, err = chat.StyledText(ctx, styling.Italic("Bot has started!")); nil != err {
+		if _, err = chat.StyledText(msgCtx, styling.Italic("Bot has started!")); nil != err {
 			switch {
-			case errutil.IsContext(ctx):
+			case errutil.IsContext(msgCtx):
 				logger.Error().Msg("Failed to send bot startup message to specified target chat due to context cancellation")
 			default:
 				return fmt.Errorf("failed to send bot startup message to specified target chat: %v", err)
@@ -231,7 +235,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 
 			_, err = chat.StyledText(
-				ctx,
+				msgCtx,
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
 				styling.URL(authorization.URL),
@@ -243,7 +247,7 @@ func run(cliCtx *cli.Context) (err error) {
 				styling.Italic("Waiting for authentication..."),
 			)
 			if nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
 					return context.Canceled
 				}
 				return fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err)
@@ -256,8 +260,8 @@ func run(cliCtx *cli.Context) (err error) {
 				case errors.Is(ctx.Err(), context.Canceled):
 					return context.Canceled
 				case errors.Is(err, auth.ErrAuthWaitTimeout):
-					if _, err = chat.StyledText(ctx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
-						if errors.Is(ctx.Err(), context.Canceled) {
+					if _, err = chat.StyledText(msgCtx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return context.Canceled
 						}
 						return fmt.Errorf("failed to send TIDAL authentication URL expired message to specified target chat: %v", err)
@@ -272,8 +276,8 @@ func run(cliCtx *cli.Context) (err error) {
 						styling.Plain("\n"),
 						styling.Plain("Restart the bot to initiate the authorization flow again."),
 					}
-					if _, err := chat.StyledText(ctx, lines...); nil != err {
-						if errors.Is(ctx.Err(), context.Canceled) {
+					if _, err := chat.StyledText(msgCtx, lines...); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return context.Canceled
 						}
 						return fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err)
@@ -290,8 +294,8 @@ func run(cliCtx *cli.Context) (err error) {
 				styling.Plain("\n"),
 				styling.Plain("Waiting for your command..."),
 			}
-			if _, err := chat.StyledText(ctx, lines...); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
+			if _, err := chat.StyledText(msgCtx, lines...); nil != err {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
 					return context.Canceled
 				}
 				return fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err)
@@ -316,19 +320,17 @@ func run(cliCtx *cli.Context) (err error) {
 
 		logger.Debug().Msg("TIDAL access token verified")
 		w.tidlAuth = tidlAuth
-		d.OnNewMessage(buildOnMessage(w))
+		d.OnNewMessage(buildOnMessage(w, msgCtx))
 
 		logger.Info().Msg("Bot is running")
 		<-ctx.Done()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
 		logger.Debug().Msg("Stopping bot due to received signal")
-		if _, err = chat.StyledText(ctx, styling.Italic("Bot is shutting down...")); nil != err {
+		if _, err = chat.StyledText(msgCtx, styling.Italic("Bot is shutting down...")); nil != err {
 			switch {
-			case errors.Is(ctx.Err(), context.Canceled):
+			case errors.Is(msgCtx.Err(), context.Canceled):
 				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context cancellation")
-			case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			case errors.Is(msgCtx.Err(), context.DeadlineExceeded):
 				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context deadline exceeded")
 			default:
 				return fmt.Errorf("failed to send bot shutdown message to specified target chat: %v", err)
@@ -338,7 +340,7 @@ func run(cliCtx *cli.Context) (err error) {
 	})
 }
 
-func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
+func buildOnMessage(w *Worker, msgCtx context.Context) func(context.Context, tg.Entities, *tg.UpdateNewMessage) error {
 	return func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
 		m, ok := update.Message.(*tg.Message)
 		if !ok || m.Out {
@@ -351,8 +353,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 		reply := w.sender.Reply(e, update)
 
 		if msg == "/start" {
-			if _, err := reply.Text(ctx, "Hello!"); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
+			if _, err := reply.Text(msgCtx, "Hello!"); nil != err {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
 					return nil
 				}
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -366,10 +368,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 			if nil != err {
 				switch {
 				case errors.Is(ctx.Err(), context.Canceled):
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					if _, err := reply.StyledText(ctx, styling.Plain("Authorizer initialization canceled")); nil != err {
-						if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					if _, err := reply.StyledText(msgCtx, styling.Plain("Authorizer initialization canceled")); nil != err {
+						if errors.Is(msgCtx.Err(), context.DeadlineExceeded) {
 							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
 							return nil
 						}
@@ -385,8 +385,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						styling.Plain("Execute the command again with a delay."),
 					}
 					w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("TIDAL authorizer initialization timed out")
-					if _, err := reply.StyledText(ctx, lines...); nil != err {
-						if errors.Is(ctx.Err(), context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, lines...); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -396,8 +396,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					return nil
 				case errutil.IsFlaw(err):
 					w.logger.Error().Func(log.Flaw(err)).Msg("Failed to initialize authorizer due to unknown reason")
-					if _, err := reply.StyledText(ctx, styling.Plain("Failed to initialize authorizer due to unknown reason")); nil != err {
-						if errors.Is(ctx.Err(), context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, styling.Plain("Failed to initialize authorizer due to unknown reason")); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -421,8 +421,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				styling.Plain("\n"),
 				styling.Italic("Waiting for authentication..."),
 			}
-			if _, err := reply.StyledText(ctx, lines...); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
+			if _, err := reply.StyledText(msgCtx, lines...); nil != err {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
 					return nil
 				}
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -434,10 +434,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 			if err := res.Err(); nil != err {
 				switch {
 				case errors.Is(ctx.Err(), context.Canceled):
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					if _, err := reply.StyledText(ctx, styling.Plain("Operation canceled while was waiting for authorization.")); nil != err {
-						if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					if _, err := reply.StyledText(msgCtx, styling.Plain("Operation canceled while was waiting for authorization.")); nil != err {
+						if errors.Is(msgCtx.Err(), context.DeadlineExceeded) {
 							w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
 							return nil
 						}
@@ -447,8 +445,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					}
 					return nil
 				case errors.Is(err, auth.ErrAuthWaitTimeout):
-					if _, err := reply.StyledText(ctx, styling.Plain("Authorization URL expired. Try again with a delay.")); nil != err {
-						if errors.Is(err, context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, styling.Plain("Authorization URL expired. Try again with a delay.")); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -463,8 +461,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						styling.Plain("\n"),
 						styling.Code(err.Error()),
 					}
-					if _, err := reply.StyledText(ctx, lines...); nil != err {
-						if errors.Is(err, context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, lines...); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -484,8 +482,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				styling.Plain("\n"),
 				styling.Plain("Waiting for your command..."),
 			}
-			if _, err := reply.StyledText(ctx, lines...); nil != err {
-				if errors.Is(err, context.Canceled) {
+			if _, err := reply.StyledText(msgCtx, lines...); nil != err {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
 					return nil
 				}
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -506,8 +504,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					}
 					if errors.Is(cause, errJobCanceled) {
 						w.logger.Info().Str("link", link).Msg("Job canceled by the /cancel command")
-						if _, err := reply.StyledText(ctx, styling.Plain("Job canceled by the /cancel command")); nil != err {
-							if errors.Is(err, context.Canceled) {
+						if _, err := reply.StyledText(msgCtx, styling.Plain("Job canceled by the /cancel command")); nil != err {
+							if errors.Is(msgCtx.Err(), context.Canceled) {
 								return nil
 							}
 							flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -518,8 +516,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					}
 					return nil
 				case errors.Is(err, context.DeadlineExceeded):
-					if _, err := reply.StyledText(ctx, styling.Plain("Job has timed out.")); nil != err {
-						if errors.Is(err, context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, styling.Plain("Job has timed out.")); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -528,8 +526,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					}
 					return nil
 				case errors.Is(err, tidl.ErrTooManyRequests):
-					if _, err := reply.StyledText(ctx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
-						if errors.Is(err, context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -545,8 +543,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						styling.Plain("\n"),
 						styling.Code(errInvalidLink.Error()),
 					}
-					if _, err := reply.StyledText(ctx, lines...); nil != err {
-						if errors.Is(err, context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, lines...); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -563,8 +561,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						styling.Plain("Cancel with "),
 						styling.BotCommand("/cancel"),
 					}
-					if _, err := reply.StyledText(ctx, lines...); nil != err {
-						if errors.Is(err, context.Canceled) {
+					if _, err := reply.StyledText(msgCtx, lines...); nil != err {
+						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
 						}
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -605,8 +603,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 						},
 					).
 					ForceFile(true)
-				if _, err := reply.Media(ctx, document); nil != err {
-					if errors.Is(err, context.Canceled) {
+				if _, err := reply.Media(msgCtx, document); nil != err {
+					if errors.Is(msgCtx.Err(), context.Canceled) {
 						return nil
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -625,8 +623,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				if !errors.Is(err, os.ErrProcessDone) {
 					panic(fmt.Sprintf("unexpected error of type %T: %v", err, err))
 				}
-				if _, err := reply.StyledText(ctx, styling.Plain("No job was running.")); nil != err {
-					if errors.Is(err, context.Canceled) {
+				if _, err := reply.StyledText(msgCtx, styling.Plain("No job was running.")); nil != err {
+					if errors.Is(msgCtx.Err(), context.Canceled) {
 						return nil
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -636,8 +634,8 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 				return nil
 			}
 
-			if _, err := reply.StyledText(ctx, styling.Plain("Job was canceled.")); nil != err {
-				if errors.Is(err, context.Canceled) {
+			if _, err := reply.StyledText(msgCtx, styling.Plain("Job was canceled.")); nil != err {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
 					return nil
 				}
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
