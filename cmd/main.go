@@ -179,7 +179,7 @@ func run(cliCtx *cli.Context) (err error) {
 		sender:     nil,
 		tidlAuth:   nil,
 		currentJob: nil,
-		cache:      cache.New[tidl.Album](),
+		cache:      cache.New[*tidl.Album](),
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
@@ -668,7 +668,7 @@ type Worker struct {
 	sender     *message.Sender
 	tidlAuth   *auth.Auth
 	currentJob *Job
-	cache      *cache.Cache[tidl.Album]
+	cache      *cache.Cache[*tidl.Album]
 	logger     zerolog.Logger
 }
 

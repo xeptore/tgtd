@@ -9,7 +9,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xeptore/flaw/v8"
 
-	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
@@ -58,7 +57,6 @@ func (d *Downloader) Track(ctx context.Context, id string) error {
 	if nil != err {
 		return err
 	}
-	d.cache.Albums.Set(id, *album, cache.DefaultAlbumTTL)
 
 	if err := d.prepareTrackDir(track, *album); nil != err {
 		return err
