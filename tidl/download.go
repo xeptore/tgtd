@@ -47,11 +47,11 @@ var ErrTooManyRequests = errors.New("too many requests")
 type Downloader struct {
 	auth     *auth.Auth
 	basePath string
-	cache    *cache.Cache[Album]
+	cache    *cache.Cache[*Album]
 	logger   zerolog.Logger
 }
 
-func NewDownloader(auth *auth.Auth, basePath string, cache *cache.Cache[Album], logger zerolog.Logger) *Downloader {
+func NewDownloader(auth *auth.Auth, basePath string, cache *cache.Cache[*Album], logger zerolog.Logger) *Downloader {
 	return &Downloader{
 		auth:     auth,
 		basePath: basePath,
@@ -65,13 +65,13 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 		return err
 	}
 
-	if coverBytes, err := d.loadCover(ctx, t); nil != err {
+	coverBytes, err := d.loadCover(ctx, t)
+	if nil != err {
 		return err
-	} else {
-		d.cache.DownloadedCovers.Set(t.cover(), coverBytes, cache.DefaultDownloadedCoverTTL)
-		if err := d.writeCover(t, coverBytes); nil != err {
-			return err
-		}
+	}
+
+	if err := d.writeCover(t, coverBytes); nil != err {
+		return err
 	}
 
 	stream, err := d.stream(ctx, t.id())
@@ -142,11 +142,15 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 }
 
 func (d *Downloader) loadCover(ctx context.Context, t Track) ([]byte, error) {
-	c := d.cache.DownloadedCovers.Get(t.cover())
-	if nil != c {
-		return c.Value(), nil
+	cachedCover, err := d.cache.DownloadedCovers.Fetch(
+		t.cover(),
+		cache.DefaultDownloadedCoverTTL,
+		func() ([]byte, error) { return d.downloadCover(ctx, t) },
+	)
+	if nil != err {
+		return nil, err
 	}
-	return d.downloadCover(ctx, t)
+	return cachedCover.Value(), nil
 }
 
 func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err error) {
@@ -162,6 +166,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err 
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get cover request: %v", err)).Append(flawP)
 	}
@@ -297,6 +302,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get page items request: %v", err)).Append(flawP)
 	}

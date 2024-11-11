@@ -39,7 +39,6 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	if nil != err {
 		return err
 	}
-	d.cache.Albums.Set(id, *album, cache.DefaultAlbumTTL)
 
 	vols := make([]Volume, len(volumeTracks))
 	for i, v := range volumeTracks {
@@ -131,11 +130,15 @@ func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
 }
 
 func (d *Downloader) loadAlbumInfo(ctx context.Context, id string) (*Album, error) {
-	a := d.cache.Albums.Get(id)
-	if nil != a {
-		return ptr.Of(a.Value()), nil
+	cachedAlbum, err := d.cache.Albums.Fetch(
+		id,
+		cache.DefaultAlbumTTL,
+		func() (*Album, error) { return d.fetchAlbumInfo(ctx, id) },
+	)
+	if nil != err {
+		return nil, err
 	}
-	return d.fetchAlbumInfo(ctx, id)
+	return cachedAlbum.Value(), nil
 }
 
 func (d *Downloader) fetchAlbumInfo(ctx context.Context, id string) (a *Album, err error) {
@@ -162,6 +165,7 @@ func (d *Downloader) fetchAlbumInfo(ctx context.Context, id string) (a *Album, e
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get album info request: %v", err)).Append(flawP)
 	}

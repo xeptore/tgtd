@@ -261,6 +261,7 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get playlist info request: %v", err)).Append(flawP)
 	}

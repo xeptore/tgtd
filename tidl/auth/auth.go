@@ -186,6 +186,7 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create refresh token request: %v", err)).Append(flawP)
 	}
@@ -487,6 +488,7 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create device authorization request: %v", err)).Append(flawP)
 	}
@@ -620,6 +622,7 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 		if errutil.IsContext(pollCtx) {
 			return nil, pollCtx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create token request: %v", err)).Append(flawP)
 	}
