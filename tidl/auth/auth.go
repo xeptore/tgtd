@@ -139,12 +139,12 @@ func save(content File, tokenFilePath string) (err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return flaw.From(fmt.Errorf("failed to open token file: %w", err)).Append(flawP)
+		return flaw.From(fmt.Errorf("failed to open token file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
-			closeErr = flaw.From(fmt.Errorf("failed to close token file: %w", closeErr)).Append(flawP)
+			closeErr = flaw.From(fmt.Errorf("failed to close token file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
 			} else {
@@ -155,7 +155,7 @@ func save(content File, tokenFilePath string) (err error) {
 
 	if err := json.NewEncoder(f).EncodeWithOption(content); nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
-		return flaw.From(fmt.Errorf("failed to encode token file: %w", err)).Append(flawP)
+		return flaw.From(fmt.Errorf("failed to encode token file: %v", err)).Append(flawP)
 	}
 	return nil
 }
@@ -311,7 +311,7 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 			return ctx.Err()
 		}
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return flaw.From(fmt.Errorf("failed to create verify access token request: %w", err)).Append(flawP)
+		return flaw.From(fmt.Errorf("failed to create verify access token request: %v", err)).Append(flawP)
 	}
 	req.Header.Add("Authorization", "Bearer "+accessToken)
 
@@ -325,13 +325,13 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 			return context.DeadlineExceeded
 		default:
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-			return flaw.From(fmt.Errorf("failed to issue verify access token request: %w", err)).Append(flawP)
+			return flaw.From(fmt.Errorf("failed to issue verify access token request: %v", err)).Append(flawP)
 		}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
-			closeErr = flaw.From(fmt.Errorf("failed to close response body: %w", closeErr)).Append(flawP)
+			closeErr = flaw.From(fmt.Errorf("failed to close response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr
@@ -373,7 +373,7 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 		if err := json.Unmarshal(respBytes, &respBody); nil != err {
 			flawP["response_body"] = string(respBytes)
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %w", err)).Append(flawP)
+			return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %v", err)).Append(flawP)
 		}
 		if respBody.Status == 401 && respBody.SubStatus == 11002 && respBody.UserMessage == "Token could not be verified" {
 			return ErrUnauthorized
@@ -605,7 +605,7 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 	reqURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return nil, flaw.From(fmt.Errorf("failed to create token URL: %w", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to create token URL: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"url": reqURL}
 

@@ -16,7 +16,7 @@ type ErrInfo struct {
 func (e ErrInfo) FlawP() flaw.P {
 	var ch []flaw.P
 	if len(e.Children) > 0 {
-		ch := make([]flaw.P, 0, len(e.Children))
+		ch := make([]flaw.P, len(e.Children))
 		for i, child := range e.Children {
 			ch[i] = child.FlawP()
 		}
