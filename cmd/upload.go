@@ -225,7 +225,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 
 	flawP := flaw.P{}
 
-	uploader, cancel := w.newUploader(ctx)
+	up, cancel := w.newUploader(ctx)
 	defer func() {
 		if cancelErr := cancel(); nil != cancelErr {
 			flawP["err_debug_tree"] = errutil.Tree(cancelErr).FlawP()
@@ -262,11 +262,11 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 
 			w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Uploading track")
 
-			up := newTrackUpload()
+			builder := newTrackUploadBuilder()
 			if i == len(fileNames)-1 { // last track in this batch
-				up.WithCaption(caption)
+				builder.WithCaption(caption)
 			}
-			document, err := up.uploadTrack(wgCtx, uploader, fileName, *info)
+			document, err := builder.uploadTrack(wgCtx, up, fileName, *info)
 			if nil != err {
 				if errutil.IsContext(wgCtx) {
 					return wgCtx.Err()
@@ -337,7 +337,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
 	}
 
-	uploader, cancel := w.newUploader(ctx)
+	up, cancel := w.newUploader(ctx)
 	defer func() {
 		if cancelErr := cancel(); nil != cancelErr {
 			flawP["err_debug_tree"] = errutil.Tree(cancelErr).FlawP()
@@ -381,7 +381,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 			styling.Plain(" "),
 			styling.Plain(fmt.Sprintf("[%d]", album.Year)),
 		}
-		doc, err := newTrackUpload().WithCaption(caption).uploadTrack(ctx, uploader, fileName, *track)
+		doc, err := newTrackUploadBuilder().WithCaption(caption).uploadTrack(ctx, up, fileName, *track)
 		if nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -403,20 +403,20 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 	return nil
 }
 
-type UploadTrack struct {
+type TrackUploadBuilder struct {
 	caption []styling.StyledTextOption
 }
 
-func newTrackUpload() *UploadTrack {
-	return &UploadTrack{caption: nil}
+func newTrackUploadBuilder() *TrackUploadBuilder {
+	return &TrackUploadBuilder{caption: nil}
 }
 
-func (u *UploadTrack) WithCaption(c []styling.StyledTextOption) *UploadTrack {
+func (u *TrackUploadBuilder) WithCaption(c []styling.StyledTextOption) *TrackUploadBuilder {
 	u.caption = c
 	return u
 }
 
-func (u *UploadTrack) uploadTrack(ctx context.Context, uploader *uploader.Uploader, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
+func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader.Uploader, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
 	coverBytes, err := os.ReadFile(fileName + ".jpg")
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}

@@ -580,7 +580,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
 					return nil
 				}
-				uploader, cancel := w.newUploader(ctx)
+				up, cancel := w.newUploader(ctx)
 				defer func() {
 					if cancelErr := cancel(); nil != cancelErr {
 						flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
@@ -588,7 +588,7 @@ func buildOnMessage(w *Worker) func(ctx context.Context, e tg.Entities, update *
 					}
 				}()
 
-				upload, err := uploader.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
+				upload, err := up.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
 				if nil != err {
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to TOML")
