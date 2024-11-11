@@ -261,7 +261,7 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 	}
 
 	var title string
-	switch titleKey := gjson.GetBytes(respBytes, "title"); titleKey.Type {
+	switch titleKey := gjson.GetBytes(respBytes, "title"); titleKey.Type { //nolint:exhaustive
 	case gjson.String:
 		title = titleKey.Str
 	default:

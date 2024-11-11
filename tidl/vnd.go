@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/xeptore/flaw/v8"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/tidl/auth"
 )

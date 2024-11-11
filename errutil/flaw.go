@@ -27,26 +27,26 @@ func HTTPResponseFlawPayload(res *http.Response) flaw.P {
 }
 
 type Flaw struct {
-	Inner        string        `toml:"inner"`
-	Records      []Record      `toml:"records"`
-	JoinedErrors []JoinedError `toml:"joined_errors"`
-	StackTrace   []StackTrace  `toml:"stack_trace"`
+	Inner        string        `yaml:"inner"`
+	Records      []Record      `yaml:"records"`
+	JoinedErrors []JoinedError `yaml:"joined_errors"`
+	StackTrace   []StackTrace  `yaml:"stack_trace"`
 }
 
 type Record struct {
-	Function string                 `toml:"function"`
-	Payload  map[string]interface{} `toml:"payload"`
+	Function string                 `yaml:"function"`
+	Payload  map[string]interface{} `yaml:"payload"`
 }
 
 type JoinedError struct {
-	Message          string      `toml:"message"`
-	CallerStackTrace *StackTrace `toml:"caller_stack_trace"`
+	Message          string      `yaml:"message"`
+	CallerStackTrace *StackTrace `yaml:"caller_stack_trace"`
 }
 
 type StackTrace struct {
-	File     string `toml:"file"`
-	Line     int    `toml:"line"`
-	Function string `toml:"function"`
+	File     string `yaml:"file"`
+	Line     int    `yaml:"line"`
+	Function string `yaml:"function"`
 }
 
 func FlawToYAML(f *flaw.Flaw) ([]byte, error) {
