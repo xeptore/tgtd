@@ -130,7 +130,7 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, vol tid
 		caption := []styling.StyledTextOption{
 			styling.Plain(vol.Album.Title),
 			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("(%d)", vol.Album.Year)),
+			styling.Plain(fmt.Sprintf("[%d]", vol.Album.Year)),
 			styling.Plain(" "),
 			styling.Plain(fmt.Sprintf("#%d", vol.Number)),
 			styling.Plain("\n"),
@@ -252,7 +252,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 		caption := []styling.StyledTextOption{
 			styling.Plain(playlist.Title),
 			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("(%d - %d)", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
+			styling.Plain(fmt.Sprintf("[%d - %d]", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
 			styling.Plain("\n"),
 			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
 		}
@@ -379,7 +379,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		caption := []styling.StyledTextOption{
 			styling.Plain(album.Title),
 			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("(%d)", album.Year)),
+			styling.Plain(fmt.Sprintf("[%d]", album.Year)),
 		}
 		doc, err := newTrackUpload().WithCaption(caption).uploadTrack(ctx, uploader, fileName, *track)
 		if nil != err {
