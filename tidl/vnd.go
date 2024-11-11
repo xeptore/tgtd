@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
@@ -98,7 +98,7 @@ func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
 	}
 	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
 
-	client := http.Client{Timeout: 5 * time.Second} // TODO: set timeout to a reasonable value
+	client := http.Client{Timeout: config.GetTrackFileSizeRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		return 0, fmt.Errorf("failed to send get track info request: %v", err)
@@ -147,7 +147,7 @@ func (d *VndTrackStream) downloadRange(ctx context.Context, filePath string, idx
 	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
 	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
-	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
+	client := http.Client{Timeout: config.VNDSegmentDownloadTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		return fmt.Errorf("failed to send get track part request: %v", err)

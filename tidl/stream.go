@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tidl/mpd"
@@ -49,7 +49,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
+	client := http.Client{Timeout: config.GetStreamURLsRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

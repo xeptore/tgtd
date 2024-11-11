@@ -16,6 +16,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
@@ -265,7 +266,7 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: 5 * time.Minute} // TODO: set it to a reasonable value
+	client := http.Client{Timeout: config.PlaylistInfoRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
