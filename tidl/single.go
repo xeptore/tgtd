@@ -19,7 +19,6 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
-	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
 
@@ -28,20 +27,18 @@ type Artist struct {
 }
 
 type Album struct {
-	ID      string  `json:"id"`
-	Year    int     `json:"year"`
-	Title   string  `json:"title"`
-	Version *string `json:"version"`
-	Cover   string  `json:"cover"`
+	ID    string `json:"id"`
+	Year  int    `json:"year"`
+	Title string `json:"title"`
+	Cover string `json:"cover"`
 }
 
 func (a Album) FlawP() flaw.P {
 	return flaw.P{
-		"id":      a.ID,
-		"year":    a.Year,
-		"title":   a.Title,
-		"version": ptr.ValueOr(a.Version, ""),
-		"cover":   a.Cover,
+		"id":    a.ID,
+		"year":  a.Year,
+		"title": a.Title,
+		"cover": a.Cover,
 	}
 }
 
@@ -303,11 +300,10 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			Name: responseBody.Artist.Name,
 		},
 		Album: Album{
-			ID:      strconv.Itoa(responseBody.Album.ID),
-			Year:    0,   // not provided by this API
-			Title:   "",  // not provided by this API
-			Version: nil, // not provided by this API
-			Cover:   responseBody.Album.Cover,
+			ID:    strconv.Itoa(responseBody.Album.ID),
+			Year:  0,  // not provided by this API
+			Title: "", // not provided by this API
+			Cover: responseBody.Album.Cover,
 		},
 		Version: responseBody.Version,
 	}

@@ -219,10 +219,9 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 	}
 
 	var respBody struct {
-		Title       string  `json:"title"`
-		ReleaseDate string  `json:"releaseDate"`
-		Version     *string `json:"version"`
-		Cover       string  `json:"cover"`
+		Title       string `json:"title"`
+		ReleaseDate string `json:"releaseDate"`
+		Cover       string `json:"cover"`
 	}
 	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &respBody); nil != err {
 		switch {
@@ -243,11 +242,10 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 	}
 
 	return &Album{
-		ID:      id,
-		Year:    releaseDate.Year(),
-		Title:   respBody.Title,
-		Version: respBody.Version,
-		Cover:   respBody.Cover,
+		ID:    id,
+		Year:  releaseDate.Year(),
+		Title: respBody.Title,
+		Cover: respBody.Cover,
 	}, nil
 }
 
@@ -388,11 +386,10 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 				Name: v.Item.Artist.Name,
 			},
 			Album: Album{
-				ID:      strconv.Itoa(v.Item.Album.ID),
-				Year:    0,   // not provided by this API
-				Title:   "",  // not provided by this API
-				Version: nil, // not provided by this API
-				Cover:   v.Item.Album.Cover,
+				ID:    strconv.Itoa(v.Item.Album.ID),
+				Year:  0,  // not provided by this API
+				Title: "", // not provided by this API
+				Cover: v.Item.Album.Cover,
 			},
 			Number:       v.Item.TrackNumber,
 			VolumeNumber: v.Item.VolumeNumber,
