@@ -138,7 +138,10 @@ func handleUnauthorized(ctx context.Context, rt string, tokenFilePath string) (*
 func save(content File, tokenFilePath string) (err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
 	if nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{
+			"err_debug_tree":  errutil.Tree(err).FlawP(),
+			"token_file_path": tokenFilePath,
+		}
 		return flaw.From(fmt.Errorf("failed to open token file: %v", err)).Append(flawP)
 	}
 	defer func() {
