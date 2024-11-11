@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"strconv"
+	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -23,23 +27,35 @@ func albumTrackDir(albumID string, volumeNumber int) string {
 }
 
 func (d *Downloader) Album(ctx context.Context, id string) error {
-	volumes, err := d.albumVolumes(ctx, id)
+	volumeTracks, err := d.albumVolumeTracks(ctx, id)
 	if nil != err {
 		return err
 	}
 
-	for i := range volumes {
-		volNum := i + 1
-		flawP := flaw.P{"volume_number": volNum}
-		if err := d.prepareAlbumVolumeDir(id, volNum, volumes[i]); nil != err {
-			return must.BeFlaw(err).Append(flawP)
+	album, err := d.albumInfo(ctx, id)
+	if nil != err {
+		return err
+	}
+
+	vols := make([]Volume, len(volumeTracks))
+	for i, v := range volumeTracks {
+		vols[i] = Volume{
+			Number: i + 1,
+			Album:  *album,
+			Tracks: v,
+		}
+	}
+
+	for _, vol := range vols {
+		if err := d.prepareAlbumVolumeDir(vol); nil != err {
+			return must.BeFlaw(err)
 		}
 	}
 
 	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(ratelimit.AlbumDownloadConcurrency)
-	for _, volumeTracks := range volumes {
-		for _, track := range volumeTracks {
+	for _, vol := range vols {
+		for _, track := range vol.Tracks {
 			wg.Go(func() error { return d.download(wgCtx, &track) })
 		}
 	}
@@ -51,8 +67,14 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	return nil
 }
 
-func (d *Downloader) prepareAlbumVolumeDir(albumID string, volNumber int, tracks []AlbumTrack) (err error) {
-	volDir := path.Join(d.basePath, albumTrackDir(albumID, volNumber))
+type Volume struct {
+	Number int          `json:"number"`
+	Album  Album        `json:"album"`
+	Tracks []AlbumTrack `json:"tracks"`
+}
+
+func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
+	volDir := path.Join(d.basePath, albumTrackDir(vol.Album.ID, vol.Number))
 	flawP := flaw.P{"volume_dir": volDir}
 	if err := os.RemoveAll(volDir); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -81,16 +103,151 @@ func (d *Downloader) prepareAlbumVolumeDir(albumID string, volNumber int, tracks
 			}
 		}
 	}()
-	if err := json.NewEncoder(f).Encode(tracks); nil != err {
+
+	if err := json.NewEncoder(f).Encode(vol); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode and write volume info json file content: %v", err)).Append(flawP)
 	}
+
 	if err := f.Sync(); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to sync volume info file: %v", err)).Append(flawP)
 	}
 
 	return nil
+}
+
+func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err error) {
+	albumURL, err := url.JoinPath(fmt.Sprintf(albumAPIFormat, id))
+	if nil != err {
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to join album base URL with album id: %v", err)).Append(flawP)
+	}
+	flawP := flaw.P{"url": albumURL}
+
+	reqURL, err := url.Parse(albumURL)
+	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to parse album URL: %v", err)).Append(flawP)
+	}
+
+	params := make(url.Values, 1)
+	params.Add("countryCode", "US")
+	reqURL.RawQuery = params.Encode()
+	flawP["encoded_query_params"] = reqURL.RawQuery
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+	if nil != err {
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
+		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to create get album info request: %v", err)).Append(flawP)
+	}
+	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
+
+	client := http.Client{Timeout: 5 * time.Minute} // TODO: set it to a reasonable value
+	resp, err := client.Do(req)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to send get album info request: %v", err)).Append(flawP)
+		}
+	}
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
+	defer func() {
+		if closeErr := resp.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close get album info response body: %v", closeErr)).Append(flawP)
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+	}()
+
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusTooManyRequests:
+		return nil, ErrTooManyRequests
+	case http.StatusForbidden:
+		ok, err := errutil.IsTooManyErrorResponse(resp)
+		if nil != err {
+			switch {
+			case errutil.IsContext(ctx):
+				return nil, ctx.Err()
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			case errutil.IsFlaw(err):
+				return nil, err
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+		if ok {
+			return nil, ErrTooManyRequests
+		}
+		resBytes, err := io.ReadAll(resp.Body)
+		if nil != err && !errors.Is(err, io.EOF) {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read get album info response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
+		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
+	default:
+		resBytes, err := io.ReadAll(resp.Body)
+		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read get album info response body: %v", err)).Append(flawP)
+		}
+		flawP["response_body"] = string(resBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
+	}
+
+	var respBody struct {
+		Title       string  `json:"title"`
+		ReleaseDate string  `json:"releaseDate"`
+		Version     *string `json:"version"`
+		Cover       string  `json:"cover"`
+	}
+	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &respBody); nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
+		}
+	}
+
+	releaseDate, err := time.Parse("2006-01-02", respBody.ReleaseDate)
+	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to parse album release date: %v", err)).Append(flawP)
+	}
+
+	return &Album{
+		ID:    id,
+		Year:  releaseDate.Year(),
+		Title: respBody.Title,
+		Cover: respBody.Cover,
+	}, nil
 }
 
 type AlbumTrack struct {
@@ -245,7 +402,7 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 
 type AlbumVolumes = [][]AlbumTrack
 
-func (d *Downloader) albumVolumes(ctx context.Context, id string) (AlbumVolumes, error) {
+func (d *Downloader) albumVolumeTracks(ctx context.Context, id string) (AlbumVolumes, error) {
 	var (
 		tracks              [][]AlbumTrack
 		currentVolumeTracks []AlbumTrack

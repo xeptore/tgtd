@@ -26,6 +26,9 @@ import (
 
 const (
 	trackAPIFormat         = "https://api.tidalhifi.com/v1/tracks/%s"
+	albumAPIFormat         = "https://api.tidalhifi.com/v1/albums/%s"
+	playlistAPIFormat      = "https://api.tidalhifi.com/v1/playlists/%s"
+	mixInfoURL             = "https://listen.tidal.com/v1/pages/mix"
 	trackStreamAPIFormat   = "https://api.tidalhifi.com/v1/tracks/%s/playbackinfopostpaywall"
 	albumItemsAPIFormat    = "https://api.tidalhifi.com/v1/albums/%s/items"
 	playlistItemsAPIFormat = "https://api.tidalhifi.com/v1/playlists/%s/items"
