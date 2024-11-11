@@ -10,11 +10,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
@@ -215,7 +215,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 
 	flawP := flaw.P{}
 
-	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
+	client := http.Client{Timeout: config.DashSegmentDownloadTimeout}
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

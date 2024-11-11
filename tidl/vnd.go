@@ -13,6 +13,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
@@ -98,7 +99,7 @@ func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
 	}
 	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
 
-	client := http.Client{Timeout: 5 * time.Second} // TODO: set timeout to a reasonable value
+	client := http.Client{Timeout: config.GetTrackFileSizeRequestTimeout}
 	resp, err := client.Do(req)
 	if nil != err {
 		return 0, fmt.Errorf("failed to send get track info request: %v", err)

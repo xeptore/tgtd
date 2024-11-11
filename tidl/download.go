@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
@@ -146,7 +147,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
+	client := http.Client{Timeout: config.CoverDownloadTimeout}
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
@@ -285,7 +286,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
-	client := http.Client{Timeout: 5 * time.Minute} // TODO: set it to a reasonable value
+	client := http.Client{Timeout: config.GetPageTracksRequestTimeout}
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {

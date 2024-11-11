@@ -10,13 +10,13 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/tidwall/gjson"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
@@ -188,7 +188,7 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 	req.Header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0")
 	req.Header.Add("Accept", "application/json")
 
-	client := http.Client{Timeout: 5 * time.Minute} // TODO: set it to a reasonable value
+	client := http.Client{Timeout: config.MixInfoRequestTimeout}
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
