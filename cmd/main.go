@@ -573,7 +573,7 @@ func buildOnMessage(w *Worker, msgCtx context.Context) func(context.Context, tg.
 				}
 
 				w.logger.Error().Func(log.Flaw(err)).Msg("Failed to run job")
-				flawBytes, err := errutil.FlawToTOML(must.BeFlaw(err))
+				flawBytes, err := errutil.FlawToYAML(must.BeFlaw(err))
 				if nil != err {
 					w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
 					return nil
@@ -586,23 +586,23 @@ func buildOnMessage(w *Worker, msgCtx context.Context) func(context.Context, tg.
 					}
 				}()
 
-				upload, err := up.FromReader(ctx, "flaw.toml", bytes.NewReader(flawBytes))
+				upload, err := up.FromReader(ctx, "flaw.yaml", bytes.NewReader(flawBytes))
 				if nil != err {
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to TOML")
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to YAML")
 					return nil
 				}
 				document := message.UploadedDocument(upload)
 				document.
-					MIME("application/toml").
+					MIME("application/yaml").
 					Attributes(
 						&tg.DocumentAttributeFilename{
 							FileName: filepath.Base(
-								fmt.Sprintf("flaw-%s.toml", time.Now().Format("2006-01-02-15-04-05")),
+								fmt.Sprintf("flaw-%s.yaml", time.Now().Format("2006-01-02-15-04-05")),
 							),
 						},
 					).
-					ForceFile(true)
+					ForceFile(false)
 				if _, err := reply.Media(msgCtx, document); nil != err {
 					if errors.Is(msgCtx.Err(), context.Canceled) {
 						return nil
