@@ -23,9 +23,6 @@ type VndTrackStream struct {
 }
 
 func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
-	wg, ctx := errgroup.WithContext(ctx)
-	wg.SetLimit(-1)
-
 	fileSize, err := d.fileSize(ctx)
 	if nil != err {
 		return fmt.Errorf("failed to get track file size: %v", err)
@@ -33,6 +30,8 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 
 	numBatches := mathutil.CeilInts(fileSize, singlePartChunkSize)
 
+	wg, ctx := errgroup.WithContext(ctx)
+	wg.SetLimit(-1)
 	for i := range numBatches {
 		wg.Go(func() error {
 			start := i * singlePartChunkSize
