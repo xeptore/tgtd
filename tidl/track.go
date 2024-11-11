@@ -89,7 +89,7 @@ func ReadTrackInfoFile(fileName string) (info *TrackInfo, err error) {
 
 	var trackInfo TrackInfo
 	if err := json.NewDecoder(file).Decode(&trackInfo); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "track": trackInfo.FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to decode track info file: %v", err)).Append(flawP)
 	}
 	return &trackInfo, nil

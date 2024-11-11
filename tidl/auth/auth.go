@@ -90,14 +90,17 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 			}
 		}
 	}()
+
 	var content File
 	if err := json.NewDecoder(f).Decode(&content); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
 		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err)).Append(flawP)
 	}
+
 	if time.Now().Unix() > content.ExpiresAt {
 		return handleUnauthorized(ctx, content.RefreshToken)
 	}
+
 	if err := verifyAccessToken(ctx, content.AccessToken); nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -150,7 +153,7 @@ func save(content File) (err error) {
 	}()
 
 	if err := json.NewEncoder(f).EncodeWithOption(content); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
 		return flaw.From(fmt.Errorf("failed to encode token file: %w", err)).Append(flawP)
 	}
 	return nil
@@ -162,20 +165,22 @@ type RefreshTokenResult struct {
 }
 
 func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenResult, err error) {
-	requestURL, err := url.JoinPath(baseURL, "/token")
+	reqURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to create token verification URL: %v", err)).Append(flawP)
 	}
-	flawP := flaw.P{"url": requestURL}
-	requestBodyParams := make(url.Values, 4)
-	requestBodyParams.Add("client_id", clientID)
-	requestBodyParams.Add("refresh_token", refreshToken)
-	requestBodyParams.Add("grant_type", "refresh_token")
-	requestBodyParams.Add("scope", "r_usr+w_usr+w_sub")
-	requestBodyParamsStr := requestBodyParams.Encode()
-	flawP["request_body_params"] = requestBodyParamsStr
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParamsStr))
+	flawP := flaw.P{"url": reqURL}
+
+	reqParams := make(url.Values, 4)
+	reqParams.Add("client_id", clientID)
+	reqParams.Add("refresh_token", refreshToken)
+	reqParams.Add("grant_type", "refresh_token")
+	reqParams.Add("scope", "r_usr+w_usr+w_sub")
+	reqParamsStr := reqParams.Encode()
+	flawP["request_params"] = reqParamsStr
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(reqParamsStr))
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
@@ -219,50 +224,8 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	switch code := resp.StatusCode; code {
-	case http.StatusOK:
-	case http.StatusBadRequest:
-		var responseBody struct {
-			Status           int    `json:"status"`
-			Error            string `json:"error"`
-			SubStatus        int    `json:"sub_status"`
-			ErrorDescription string `json:"error_description"`
-		}
-		if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			default:
-				flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-				return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
-			}
-		}
-		if responseBody.Status == 400 && responseBody.SubStatus == 11101 && responseBody.Error == "invalid_grant" && responseBody.ErrorDescription == "Token could not be verified" {
-			return nil, ErrUnauthorized
-		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read 400 status code response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.ErrorDescription)).Append(flawP)
-	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read %d status code response body: %v", code, err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
-	}
-
-	var responseBody struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
@@ -270,17 +233,52 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 			return nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to read refresh token response body: %v", err)).Append(flawP)
 		}
 	}
 
-	expiresAt, err := extractExpiresAt(responseBody.AccessToken)
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusBadRequest:
+		var respBody struct {
+			Status           int    `json:"status"`
+			Error            string `json:"error"`
+			SubStatus        int    `json:"sub_status"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(respBytes, &respBody); nil != err {
+			flawP["response_body"] = string(respBytes)
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
+		}
+		if respBody.Status == 400 && respBody.SubStatus == 11101 && respBody.Error == "invalid_grant" && respBody.ErrorDescription == "Token could not be verified" {
+			return nil, ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 400 response")).Append(flawP)
+	default:
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
+	}
+
+	var respBody struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
+	}
+
+	expiresAt, err := extractExpiresAt(respBody.AccessToken)
 	if nil != err {
+		flawP["access_token"] = respBody.AccessToken
 		return nil, must.BeFlaw(err).Append(flawP)
 	}
 
 	return &RefreshTokenResult{
-		AccessToken: responseBody.AccessToken,
+		AccessToken: respBody.AccessToken,
 		ExpiresAt:   expiresAt,
 	}, nil
 }
@@ -294,7 +292,7 @@ func extractExpiresAt(accessToken string) (int64, error) {
 		ExpiresAt int64 `json:"exp"`
 	}
 	if err := json.NewDecoder(base64.NewDecoder(base64.StdEncoding, strings.NewReader(splits[1]))).Decode(&obj); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "2nd_split": splits[1]}
 		return 0, flaw.From(fmt.Errorf("failed to decode access token payload: %v", err)).Append(flawP)
 	}
 	return obj.ExpiresAt, nil
@@ -348,43 +346,41 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 	}()
 	flawP := flaw.P{"response": errutil.HTTPResponseFlawPayload(resp)}
 
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to read verify access token response body: %v", err)).Append(flawP)
+		}
+	}
+
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 		return nil
 	case http.StatusUnauthorized:
-		var responseBody struct {
+		var respBody struct {
 			Status      int    `json:"status"`
 			SubStatus   int    `json:"subStatus"`
 			UserMessage string `json:"userMessage"`
 		}
-		if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return context.DeadlineExceeded
-			default:
-				flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-				return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %w", err)).Append(flawP)
-			}
+		if err := json.Unmarshal(respBytes, &respBody); nil != err {
+			flawP["response_body"] = string(respBytes)
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %w", err)).Append(flawP)
 		}
-		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
+		if respBody.Status == 401 && respBody.SubStatus == 11002 && respBody.UserMessage == "Token could not be verified" {
 			return ErrUnauthorized
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read 401 status code response body: %w", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
+
+		flawP["response_body"] = string(respBytes)
+		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read %d status code response body: %w", code, err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 }
@@ -472,18 +468,20 @@ func NewAuthorizer(ctx context.Context) (link *AuthorizationResult, wait <-chan 
 }
 
 func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse, err error) {
-	requestURL, err := url.JoinPath(baseURL, "/device_authorization")
+	reqURL, err := url.JoinPath(baseURL, "/device_authorization")
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to create device authorization URL: %v", err)).Append(flawP)
 	}
-	flawP := flaw.P{"url": requestURL}
-	requestBodyParams := make(url.Values, 2)
-	requestBodyParams.Add("client_id", clientID)
-	requestBodyParams.Add("scope", "r_usr+w_usr+w_sub")
-	requestBodyParamsStr := requestBodyParams.Encode()
-	flawP["request_body_params"] = requestBodyParamsStr
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyParamsStr))
+	flawP := flaw.P{"url": reqURL}
+
+	reqParams := make(url.Values, 2)
+	reqParams.Add("client_id", clientID)
+	reqParams.Add("scope", "r_usr+w_usr+w_sub")
+	reqParamsStr := reqParams.Encode()
+	flawP["request_body_params"] = reqParamsStr
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(reqParamsStr))
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
@@ -524,24 +522,8 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	if resp.StatusCode != http.StatusOK {
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", resp.StatusCode)).Append(flawP)
-	}
-
-	var responseBody struct {
-		DeviceCode      string `json:"deviceCode"`
-		UserCode        string `json:"userCode"`
-		VerificationURI string `json:"verificationUri"`
-		ExpiresIn       int    `json:"expiresIn"`
-		Interval        int    `json:"interval"`
-	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
@@ -549,30 +531,48 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 			return nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode response body: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to read authorization response body: %v", err)).Append(flawP)
 		}
 	}
+
+	if resp.StatusCode != http.StatusOK {
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", resp.StatusCode)).Append(flawP)
+	}
+
+	var respBody struct {
+		DeviceCode      string `json:"deviceCode"`
+		UserCode        string `json:"userCode"`
+		VerificationURI string `json:"verificationUri"`
+		ExpiresIn       int    `json:"expiresIn"`
+		Interval        int    `json:"interval"`
+	}
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode response body: %v", err)).Append(flawP)
+	}
 	flawP["response_body"] = flaw.P{
-		"device_code":      responseBody.DeviceCode,
-		"user_code":        responseBody.UserCode,
-		"verification_uri": responseBody.VerificationURI,
-		"expires_in":       responseBody.ExpiresIn,
-		"interval":         responseBody.Interval,
+		"device_code":      respBody.DeviceCode,
+		"user_code":        respBody.UserCode,
+		"verification_uri": respBody.VerificationURI,
+		"expires_in":       respBody.ExpiresIn,
+		"interval":         respBody.Interval,
 	}
 
 	//nolint:exhaustruct
 	authorizationURL := url.URL{
 		Scheme: "https",
-		Host:   responseBody.VerificationURI,
-		Path:   responseBody.UserCode,
+		Host:   respBody.VerificationURI,
+		Path:   respBody.UserCode,
 	}
 	authorizationURLStr := authorizationURL.String()
-	flawP["authorizationURL"] = authorizationURLStr
+	flawP["authorization_url"] = authorizationURLStr
 	return &authorizationResponse{
 		URL:        authorizationURLStr,
-		DeviceCode: responseBody.DeviceCode,
-		ExpiresIn:  responseBody.ExpiresIn,
-		Interval:   responseBody.Interval,
+		DeviceCode: respBody.DeviceCode,
+		ExpiresIn:  respBody.ExpiresIn,
+		Interval:   respBody.Interval,
 	}, nil
 }
 
@@ -599,20 +599,22 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 		}
 	}()
 
-	requestURL, err := url.JoinPath(baseURL, "/token")
+	reqURL, err := url.JoinPath(baseURL, "/token")
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to create token URL: %w", err)).Append(flawP)
 	}
-	flawP := flaw.P{"url": requestURL}
-	requestBodyParams := make(url.Values, 4)
-	requestBodyParams.Add("client_id", clientID)
-	requestBodyParams.Add("scope", "r_usr+w_usr+w_sub")
-	requestBodyParams.Add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-	requestBodyParams.Add("device_code", r.DeviceCode)
-	requestBodyStr := requestBodyParams.Encode()
-	flawP["request_body_str"] = requestBodyStr
-	req, err := http.NewRequestWithContext(pollCtx, http.MethodPost, requestURL, bytes.NewBufferString(requestBodyStr))
+	flawP := flaw.P{"url": reqURL}
+
+	reqParams := make(url.Values, 4)
+	reqParams.Add("client_id", clientID)
+	reqParams.Add("scope", "r_usr+w_usr+w_sub")
+	reqParams.Add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+	reqParams.Add("device_code", r.DeviceCode)
+	reqParamsStr := reqParams.Encode()
+	flawP["request_body_str"] = reqParamsStr
+
+	req, err := http.NewRequestWithContext(pollCtx, http.MethodPost, reqURL, bytes.NewBufferString(reqParamsStr))
 	if nil != err {
 		if errutil.IsContext(pollCtx) {
 			return nil, pollCtx.Err()
@@ -656,70 +658,63 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read check authorization response body: %v", err)).Append(flawP)
+		}
+	}
+
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusBadRequest:
-		var responseBody struct {
+		var respBody struct {
 			Status           int    `json:"status"`
 			Error            string `json:"error"`
 			SubStatus        int    `json:"sub_status"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if err := json.NewDecoder(resp.Body).DecodeContext(pollCtx, &responseBody); nil != err {
-			switch {
-			case errutil.IsContext(pollCtx):
-				return nil, pollCtx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			default:
-				flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-				return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
-			}
+		if err := json.Unmarshal(respBytes, &respBody); nil != err {
+			flawP["response_body"] = string(respBytes)
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 		}
-		if responseBody.Status == 400 && responseBody.Error == "authorization_pending" && responseBody.SubStatus == 1002 && responseBody.ErrorDescription == "Device Authorization code is not authorized yet" {
+		if respBody.Status == 400 && respBody.Error == "authorization_pending" && respBody.SubStatus == 1002 && respBody.ErrorDescription == "Device Authorization code is not authorized yet" {
 			return nil, ErrUnauthorized
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read 400 status code response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.Error)).Append(flawP)
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 400 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read %d status code response body: %v", code, err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
-	var responseBody struct {
+	var respBody struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(pollCtx, &responseBody); nil != err {
-		switch {
-		case errors.Is(pollCtx.Err(), context.Canceled):
-			return nil, pollCtx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
-		}
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode 200 status code response body: %v", err)).Append(flawP)
 	}
 
-	expiresAt, err := extractExpiresAt(responseBody.AccessToken)
+	expiresAt, err := extractExpiresAt(respBody.AccessToken)
 	if nil != err {
-		return nil, err
+		flawP["response_body"] = string(respBytes)
+		return nil, must.BeFlaw(err).Append(flawP)
 	}
 
 	return &Credentials{
-		AccessToken:  responseBody.AccessToken,
-		RefreshToken: responseBody.RefreshToken,
+		AccessToken:  respBody.AccessToken,
+		RefreshToken: respBody.RefreshToken,
 		ExpiresAt:    expiresAt,
 	}, nil
 }

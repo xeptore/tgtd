@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/flaw/v8"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
@@ -120,6 +121,22 @@ func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
 		return 0, auth.ErrUnauthorized
 	default:
 		return 0, fmt.Errorf("unexpected status code: %d", code)
+	}
+}
+
+type VNDManifest struct {
+	MimeType       string   `json:"mimeType"`
+	KeyID          *string  `json:"keyId"`
+	EncryptionType string   `json:"encryptionType"`
+	URLs           []string `json:"urls"`
+}
+
+func (m *VNDManifest) FlawP() flaw.P {
+	return flaw.P{
+		"mimeType":       m.MimeType,
+		"keyId":          m.KeyID,
+		"encryptionType": m.EncryptionType,
+		"urls":           m.URLs,
 	}
 }
 

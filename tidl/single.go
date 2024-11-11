@@ -14,16 +14,20 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
 
 type Artist struct {
 	Name string `json:"name"`
+}
+
+func (a Artist) FlawP() flaw.P {
+	return flaw.P{"name": a.Name}
 }
 
 type Album struct {
@@ -85,6 +89,8 @@ func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 		return flaw.From(fmt.Errorf("failed to create track album info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(a); nil != err {
+		flawP["album"] = a.FlawP()
+		flawP["track"] = ptr.Of(t.info()).FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode track album info: %v", err)).Append(flawP)
 	}
@@ -115,7 +121,7 @@ func ReadTrackAlbumInfoFile(trackDir string) (inf *Album, err error) {
 	}()
 
 	if err := json.NewDecoder(f).Decode(&inf); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "track": inf.FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to unmarshal track album info file: %v", err)).Append(flawP)
 	}
 
@@ -150,9 +156,9 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		return nil, flaw.From(fmt.Errorf("failed to parse track URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 1)
-	params.Add("countryCode", "US")
-	reqURL.RawQuery = params.Encode()
+	reqParams := make(url.Values, 1)
+	reqParams.Add("countryCode", "US")
+	reqURL.RawQuery = reqParams.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
@@ -202,6 +208,19 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read track info response body: %v", err)).Append(flawP)
+		}
+	}
+
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
@@ -210,60 +229,31 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			SubStatus   int    `json:"subStatus"`
 			UserMessage string `json:"userMessage"`
 		}
-		if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			default:
-				flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-				return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
-			}
+		if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+			flawP["response_body"] = string(respBytes)
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 		}
 		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
 			return nil, auth.ErrUnauthorized
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected response: %d %s", responseBody.Status, responseBody.UserMessage)).Append(flawP)
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			case errutil.IsFlaw(err):
-				return nil, err
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-		if ok {
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
+			return nil, must.BeFlaw(err).Append(flawP)
+		} else if ok {
 			return nil, ErrTooManyRequests
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
@@ -280,16 +270,10 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		} `json:"album"`
 		Version *string `json:"version"`
 	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &responseBody); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
-		}
+	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 	}
 
 	track := SingleTrack{

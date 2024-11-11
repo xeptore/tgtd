@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/sliceutil"
 )
 
 func playlistTrackDir(playlistID string) string {
@@ -83,6 +83,7 @@ func (d *Downloader) preparePlaylistDir(p Playlist) error {
 		return flaw.From(fmt.Errorf("failed to create playlist info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(p); nil != err {
+		flawP["playlist"] = p.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode playlist info: %v", err)).Append(flawP)
 	}
@@ -101,6 +102,16 @@ type Playlist struct {
 	Tracks            []PlaylistTrack `json:"tracks"`
 }
 
+func (p *Playlist) FlawP() flaw.P {
+	return flaw.P{
+		"id":                p.ID,
+		"created_at_year":   p.CreatedAtYear,
+		"last_updated_year": p.LastUpdatedAtYear,
+		"title":             p.Title,
+		"tracks":            sliceutil.Map(p.Tracks, func(t PlaylistTrack) flaw.P { return t.FlawP() }),
+	}
+}
+
 type PlaylistTrack struct {
 	ID         string  `json:"id"`
 	PlayListID string  `json:"playlist_id"`
@@ -109,6 +120,18 @@ type PlaylistTrack struct {
 	ArtistName string  `json:"artist_name"`
 	Cover      string  `json:"cover"`
 	Version    *string `json:"version"`
+}
+
+func (t *PlaylistTrack) FlawP() flaw.P {
+	return flaw.P{
+		"id":          t.ID,
+		"playlist_id": t.PlayListID,
+		"duration":    t.Duration,
+		"title":       t.Title,
+		"artist_name": t.ArtistName,
+		"cover":       t.Cover,
+		"version":     ptr.ValueOr(t.Version, ""),
+	}
 }
 
 func (t *PlaylistTrack) id() string {
@@ -227,10 +250,11 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 		return nil, flaw.From(fmt.Errorf("failed to parse playlist URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 1)
-	params.Add("countryCode", "US")
-	reqURL.RawQuery = params.Encode()
+	queryParams := make(url.Values, 1)
+	queryParams.Add("countryCode", "US")
+	reqURL.RawQuery = queryParams.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
@@ -254,7 +278,6 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 			return nil, flaw.From(fmt.Errorf("failed to send get playlist info request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
@@ -275,42 +298,37 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 			}
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read playlist info response body: %v", err)).Append(flawP)
+		}
+	}
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			case errutil.IsFlaw(err):
-				return nil, err
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-		if ok {
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
+			return nil, must.BeFlaw(err).Append(flawP)
+		} else if ok {
 			return nil, ErrTooManyRequests
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get playlist info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 403 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get playlist info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
@@ -319,16 +337,10 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 		Created     string `json:"created"`
 		LastUpdated string `json:"lastUpdated"`
 	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &respBody); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode playlist response: %v", err)).Append(flawP)
-		}
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode playlist response: %v", err)).Append(flawP)
 	}
 
 	const dateLayout = "2006-01-02T15:04:05.000-0700"
@@ -361,7 +373,7 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 	}
 	flawP := flaw.P{"url": playlistURL}
 
-	response, err := d.getPagedItems(ctx, playlistURL, page)
+	respBytes, err := d.getPagedItems(ctx, playlistURL, page)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -376,47 +388,21 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 			panic(errutil.UnknownError(err))
 		}
 	}
-	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
-			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close get playlist page items response body: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = closeErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context was ended")).Join(closeErr)
-			case errors.Is(err, context.DeadlineExceeded):
-				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errors.Is(err, os.ErrNotExist):
-				err = flaw.From(errors.New("no items in result")).Join(closeErr)
-			case errutil.IsFlaw(err):
-				err = must.BeFlaw(err).Join(closeErr)
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-	}()
-	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
-	var responseBody PlaylistResponse
-	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			return nil, 0, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, 0, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
-		}
+	var respBody PlaylistResponse
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 	}
-	thisPageItems := len(responseBody.Items)
-	if thisPageItems == 0 {
+
+	thisPageItemsCount := len(respBody.Items)
+	if thisPageItemsCount == 0 {
 		return nil, 0, os.ErrNotExist
 	}
-	flawP["response_body"] = responseBody.FlawP()
+	flawP["response_body"] = respBody.FlawP()
 
-	for _, v := range responseBody.Items {
+	for _, v := range respBody.Items {
 		if v.Type != trackTypeResponseItem {
 			continue
 		}
@@ -436,7 +422,7 @@ func (d *Downloader) playlistTracksPage(ctx context.Context, id string, page int
 		tracks = append(tracks, playlistTrack)
 	}
 
-	return tracks, responseBody.TotalNumberOfItems - (thisPageItems + page*pageSize), nil
+	return tracks, respBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
 func (d *Downloader) playlistTracks(ctx context.Context, id string) ([]PlaylistTrack, error) {

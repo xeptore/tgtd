@@ -13,13 +13,15 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/samber/lo"
+	"github.com/tidwall/gjson"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/sliceutil"
 )
 
 func mixTrackDir(mixID string) string {
@@ -78,6 +80,7 @@ func (d *Downloader) prepareMixDir(m Mix) error {
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(m); nil != err {
+		flawP["mix"] = m.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode mix info: %v", err)).Append(flawP)
 	}
@@ -94,6 +97,14 @@ type Mix struct {
 	Tracks []MixTrack `json:"tracks"`
 }
 
+func (m *Mix) FlawP() flaw.P {
+	return flaw.P{
+		"id":     m.ID,
+		"title":  m.Title,
+		"tracks": sliceutil.Map(m.Tracks, func(t MixTrack) flaw.P { return t.FlawP() }),
+	}
+}
+
 type MixTrack struct {
 	ID         string  `json:"id"`
 	MixID      string  `json:"mix_id"`
@@ -102,6 +113,18 @@ type MixTrack struct {
 	ArtistName string  `json:"artist_name"`
 	Cover      string  `json:"cover"`
 	Version    *string `json:"version"`
+}
+
+func (t *MixTrack) FlawP() flaw.P {
+	return flaw.P{
+		"id":          t.ID,
+		"mix_id":      t.MixID,
+		"duration":    t.Duration,
+		"title":       t.Title,
+		"artist_name": t.ArtistName,
+		"cover":       t.Cover,
+		"version":     ptr.ValueOr(t.Version, ""),
+	}
 }
 
 func (t *MixTrack) id() string {
@@ -145,13 +168,14 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 		return nil, flaw.From(fmt.Errorf("failed to parse playlist URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 4)
-	params.Add("mixId", id)
-	params.Add("countryCode", "US")
-	params.Add("locale", "en_US")
-	params.Add("deviceType", "BROWSER")
-	reqURL.RawQuery = params.Encode()
+	reqParams := make(url.Values, 4)
+	reqParams.Add("mixId", id)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("locale", "en_US")
+	reqParams.Add("deviceType", "BROWSER")
+	reqURL.RawQuery = reqParams.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
@@ -177,7 +201,6 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 			return nil, flaw.From(fmt.Errorf("failed to send get mix info request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
@@ -198,49 +221,10 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 			}
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	switch code := resp.StatusCode; code {
-	case http.StatusOK:
-	case http.StatusTooManyRequests:
-		return nil, ErrTooManyRequests
-	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			case errutil.IsFlaw(err):
-				return nil, err
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-		if ok {
-			return nil, ErrTooManyRequests
-		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get mix info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
-	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get mix info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
-	}
-
-	var respBody struct {
-		Title string `json:"title"`
-	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &respBody); nil != err { // TODO: use gjson instead to extract the value
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
@@ -248,13 +232,46 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 			return nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to read mix info response body: %v", err)).Append(flawP)
 		}
+	}
+
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusTooManyRequests:
+		return nil, ErrTooManyRequests
+	case http.StatusForbidden:
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
+			return nil, must.BeFlaw(err).Append(flawP)
+		} else if ok {
+			return nil, ErrTooManyRequests
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
+	default:
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
+	}
+
+	if !gjson.ValidBytes(respBytes) {
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(fmt.Errorf("invalid mix info response json: %v", err)).Append(flawP)
+	}
+
+	var title string
+	switch titleKey := gjson.GetBytes(respBytes, "title"); titleKey.Type {
+	case gjson.String:
+		title = titleKey.Str
+	default:
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected mix info response: %v", err)).Append(flawP)
 	}
 
 	return &Mix{
 		ID:     id,
-		Title:  respBody.Title,
+		Title:  title,
 		Tracks: nil,
 	}, nil
 }
@@ -267,7 +284,7 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 	}
 	flawP := flaw.P{"mix_url": mixURL}
 
-	response, err := d.getPagedItems(ctx, mixURL, page)
+	respBytes, err := d.getPagedItems(ctx, mixURL, page)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -282,25 +299,6 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 			panic(errutil.UnknownError(err))
 		}
 	}
-	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
-			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close get mix page items response body: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = closeErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context was ended")).Join(closeErr)
-			case errors.Is(err, context.DeadlineExceeded):
-				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errutil.IsFlaw(err):
-				err = must.BeFlaw(err).Join(closeErr)
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-	}()
-	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	var responseBody struct {
 		TotalNumberOfItems int `json:"totalNumberOfItems"`
@@ -322,19 +320,14 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 			} `json:"item"`
 		} `json:"items"`
 	}
-	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			return nil, 0, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, 0, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
-		}
+	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 	}
-	thisPageItems := len(responseBody.Items)
-	if thisPageItems == 0 {
+
+	thisPageItemsCount := len(responseBody.Items)
+	if thisPageItemsCount == 0 {
 		return nil, 0, nil
 	}
 
@@ -354,7 +347,7 @@ func (d *Downloader) mixTracksPage(ctx context.Context, id string, page int) (tr
 		tracks = append(tracks, mixTrack)
 	}
 
-	return tracks, responseBody.TotalNumberOfItems - (thisPageItems + page*pageSize), nil
+	return tracks, responseBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
 func (d *Downloader) mixTracks(ctx context.Context, id string) ([]MixTrack, error) {
