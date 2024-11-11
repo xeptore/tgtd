@@ -8,6 +8,7 @@ require (
 	github.com/gotd/td v0.111.2
 	github.com/iyear/tdl/core v0.17.7
 	github.com/joho/godotenv v1.5.1
+	github.com/karlseguin/ccache/v3 v3.0.6
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.9.0
 	github.com/tidwall/gjson v1.18.0

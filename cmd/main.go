@@ -33,6 +33,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"gopkg.in/matryer/try.v1"
 
+	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/constant"
 	"github.com/xeptore/tgtd/ctxutil"
@@ -178,6 +179,7 @@ func run(cliCtx *cli.Context) (err error) {
 		sender:     nil,
 		tidlAuth:   nil,
 		currentJob: nil,
+		cache:      cache.New[tidl.Album](),
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
@@ -666,6 +668,7 @@ type Worker struct {
 	sender     *message.Sender
 	tidlAuth   *auth.Auth
 	currentJob *Job
+	cache      *cache.Cache[tidl.Album]
 	logger     zerolog.Logger
 }
 
@@ -766,7 +769,12 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	w.currentJob = &job
 
 	const downloadBaseDir = "downloads"
-	downloader := tidl.NewDownloader(w.tidlAuth, downloadBaseDir, w.logger.With().Logger())
+	downloader := tidl.NewDownloader(
+		w.tidlAuth,
+		downloadBaseDir,
+		w.cache,
+		w.logger.With().Logger(),
+	)
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
