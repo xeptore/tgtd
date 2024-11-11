@@ -108,6 +108,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
 		} else if ok {
 			return nil, ErrTooManyRequests
@@ -125,6 +126,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		Manifest         string `json:"manifest"`
 	}
 	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 	}
@@ -141,14 +143,10 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		flawP["stream_info"] = flaw.P{"info": info.FlawP()}
 		return &DashTrackStream{Info: *info, AuthAccessToken: d.auth.Creds.AccessToken}, nil
 	case "application/vnd.tidal.bts", "vnd.tidal.bt":
-		var manifest struct {
-			MimeType       string   `json:"mimeType"`
-			KeyID          *string  `json:"keyId"`
-			EncryptionType string   `json:"encryptionType"`
-			URLs           []string `json:"urls"`
-		}
+		var manifest VNDManifest
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(responseBody.Manifest))
 		if err := json.NewDecoder(dec).Decode(&manifest); nil != err {
+			flawP["manifest"] = manifest.FlawP()
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to decode vnd.tidal.bt manifest: %v", err)).Append(flawP)
 		}

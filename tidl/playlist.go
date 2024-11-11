@@ -20,6 +20,7 @@ import (
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/sliceutil"
 )
 
 func playlistTrackDir(playlistID string) string {
@@ -82,6 +83,7 @@ func (d *Downloader) preparePlaylistDir(p Playlist) error {
 		return flaw.From(fmt.Errorf("failed to create playlist info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(p); nil != err {
+		flawP["playlist"] = p.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode playlist info: %v", err)).Append(flawP)
 	}
@@ -100,6 +102,16 @@ type Playlist struct {
 	Tracks            []PlaylistTrack `json:"tracks"`
 }
 
+func (p *Playlist) FlawP() flaw.P {
+	return flaw.P{
+		"id":                p.ID,
+		"created_at_year":   p.CreatedAtYear,
+		"last_updated_year": p.LastUpdatedAtYear,
+		"title":             p.Title,
+		"tracks":            sliceutil.Map(p.Tracks, func(t PlaylistTrack) flaw.P { return t.FlawP() }),
+	}
+}
+
 type PlaylistTrack struct {
 	ID         string  `json:"id"`
 	PlayListID string  `json:"playlist_id"`
@@ -108,6 +120,18 @@ type PlaylistTrack struct {
 	ArtistName string  `json:"artist_name"`
 	Cover      string  `json:"cover"`
 	Version    *string `json:"version"`
+}
+
+func (t *PlaylistTrack) FlawP() flaw.P {
+	return flaw.P{
+		"id":          t.ID,
+		"playlist_id": t.PlayListID,
+		"duration":    t.Duration,
+		"title":       t.Title,
+		"artist_name": t.ArtistName,
+		"cover":       t.Cover,
+		"version":     ptr.ValueOr(t.Version, ""),
+	}
 }
 
 func (t *PlaylistTrack) id() string {
@@ -226,10 +250,11 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 		return nil, flaw.From(fmt.Errorf("failed to parse playlist URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 1)
-	params.Add("countryCode", "US")
-	reqURL.RawQuery = params.Encode()
+	queryParams := make(url.Values, 1)
+	queryParams.Add("countryCode", "US")
+	reqURL.RawQuery = queryParams.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
@@ -253,7 +278,6 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 			return nil, flaw.From(fmt.Errorf("failed to send get playlist info request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
@@ -274,6 +298,7 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 			}
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {

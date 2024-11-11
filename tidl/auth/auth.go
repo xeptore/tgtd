@@ -93,7 +93,7 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 
 	var content File
 	if err := json.NewDecoder(f).Decode(&content); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
 		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err)).Append(flawP)
 	}
 
@@ -153,7 +153,7 @@ func save(content File) (err error) {
 	}()
 
 	if err := json.NewEncoder(f).EncodeWithOption(content); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
 		return flaw.From(fmt.Errorf("failed to encode token file: %w", err)).Append(flawP)
 	}
 	return nil
@@ -178,7 +178,7 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	reqParams.Add("grant_type", "refresh_token")
 	reqParams.Add("scope", "r_usr+w_usr+w_sub")
 	reqParamsStr := reqParams.Encode()
-	flawP["request_body_params"] = reqParamsStr
+	flawP["request_params"] = reqParamsStr
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(reqParamsStr))
 	if nil != err {
@@ -240,18 +240,18 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusBadRequest:
-		var responseBody struct {
+		var respBody struct {
 			Status           int    `json:"status"`
 			Error            string `json:"error"`
 			SubStatus        int    `json:"sub_status"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		if err := json.Unmarshal(respBytes, &respBody); nil != err {
 			flawP["response_body"] = string(respBytes)
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to decode 400 status code response body: %v", err)).Append(flawP)
 		}
-		if responseBody.Status == 400 && responseBody.SubStatus == 11101 && responseBody.Error == "invalid_grant" && responseBody.ErrorDescription == "Token could not be verified" {
+		if respBody.Status == 400 && respBody.SubStatus == 11101 && respBody.Error == "invalid_grant" && respBody.ErrorDescription == "Token could not be verified" {
 			return nil, ErrUnauthorized
 		}
 
@@ -273,6 +273,7 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 
 	expiresAt, err := extractExpiresAt(respBody.AccessToken)
 	if nil != err {
+		flawP["access_token"] = respBody.AccessToken
 		return nil, must.BeFlaw(err).Append(flawP)
 	}
 
@@ -291,7 +292,7 @@ func extractExpiresAt(accessToken string) (int64, error) {
 		ExpiresAt int64 `json:"exp"`
 	}
 	if err := json.NewDecoder(base64.NewDecoder(base64.StdEncoding, strings.NewReader(splits[1]))).Decode(&obj); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "2nd_split": splits[1]}
 		return 0, flaw.From(fmt.Errorf("failed to decode access token payload: %v", err)).Append(flawP)
 	}
 	return obj.ExpiresAt, nil
@@ -707,7 +708,8 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 
 	expiresAt, err := extractExpiresAt(respBody.AccessToken)
 	if nil != err {
-		return nil, err
+		flawP["response_body"] = string(respBytes)
+		return nil, must.BeFlaw(err).Append(flawP)
 	}
 
 	return &Credentials{

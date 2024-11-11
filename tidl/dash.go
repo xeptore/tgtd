@@ -210,6 +210,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
 	}
 	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+
 	flawP := flaw.P{}
 
 	client := http.Client{Timeout: 5 * time.Hour} // TODO: set timeout to a reasonable value
@@ -269,6 +270,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		return ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return must.BeFlaw(err).Append(flawP)
 		} else if ok {
 			return ErrTooManyRequests
@@ -282,6 +284,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	}
 
 	if n, err := io.Copy(f, bytes.NewReader(respBytes)); nil != err {
+		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to write track part to file: %v", err)).Append(flawP)
 	} else if n == 0 {

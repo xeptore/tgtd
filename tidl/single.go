@@ -18,11 +18,16 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
 
 type Artist struct {
 	Name string `json:"name"`
+}
+
+func (a Artist) FlawP() flaw.P {
+	return flaw.P{"name": a.Name}
 }
 
 type Album struct {
@@ -84,6 +89,8 @@ func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 		return flaw.From(fmt.Errorf("failed to create track album info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(a); nil != err {
+		flawP["album"] = a.FlawP()
+		flawP["track"] = ptr.Of(t.info()).FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode track album info: %v", err)).Append(flawP)
 	}
@@ -114,7 +121,7 @@ func ReadTrackAlbumInfoFile(trackDir string) (inf *Album, err error) {
 	}()
 
 	if err := json.NewDecoder(f).Decode(&inf); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "track": inf.FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to unmarshal track album info file: %v", err)).Append(flawP)
 	}
 
@@ -149,9 +156,9 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		return nil, flaw.From(fmt.Errorf("failed to parse track URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 1)
-	params.Add("countryCode", "US")
-	reqURL.RawQuery = params.Encode()
+	reqParams := make(url.Values, 1)
+	reqParams.Add("countryCode", "US")
+	reqURL.RawQuery = reqParams.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
@@ -223,6 +230,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 			UserMessage string `json:"userMessage"`
 		}
 		if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+			flawP["response_body"] = string(respBytes)
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 		}
@@ -236,6 +244,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
 		} else if ok {
 			return nil, ErrTooManyRequests
@@ -262,6 +271,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		Version *string `json:"version"`
 	}
 	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 	}

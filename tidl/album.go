@@ -18,7 +18,9 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/sliceutil"
 )
 
 func albumTrackDir(albumID string, volumeNumber int) string {
@@ -72,6 +74,14 @@ type Volume struct {
 	Tracks []AlbumTrack `json:"tracks"`
 }
 
+func (v Volume) FlawP() flaw.P {
+	return flaw.P{
+		"number": v.Number,
+		"album":  v.Album.FlawP(),
+		"tracks": sliceutil.Map(v.Tracks, func(o AlbumTrack) flaw.P { return o.FlawP() }),
+	}
+}
+
 func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
 	volDir := path.Join(d.basePath, albumTrackDir(vol.Album.ID, vol.Number))
 	flawP := flaw.P{"volume_dir": volDir}
@@ -104,6 +114,7 @@ func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
 	}()
 
 	if err := json.NewEncoder(f).Encode(vol); nil != err {
+		flawP["volume"] = vol.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode and write volume info json file content: %v", err)).Append(flawP)
 	}
@@ -134,6 +145,7 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 	params.Add("countryCode", "US")
 	reqURL.RawQuery = params.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
@@ -157,7 +169,6 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 			return nil, flaw.From(fmt.Errorf("failed to send get album info request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
@@ -178,6 +189,8 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 			}
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
+
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
@@ -197,10 +210,12 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err)
 		} else if ok {
 			return nil, ErrTooManyRequests
 		}
+
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
@@ -214,6 +229,7 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 		Cover       string `json:"cover"`
 	}
 	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to decode album info response: %v", err)).Append(flawP)
 	}
@@ -241,6 +257,19 @@ type AlbumTrack struct {
 	Artist       Artist
 	Album        Album
 	Version      *string
+}
+
+func (t AlbumTrack) FlawP() flaw.P {
+	return flaw.P{
+		"id":            t.ID,
+		"number":        t.Number,
+		"volume_number": t.VolumeNumber,
+		"duration":      t.Duration,
+		"title":         t.Title,
+		"artist":        t.Artist.FlawP(),
+		"album":         t.Album.FlawP(),
+		"version":       ptr.ValueOr(t.Version, ""),
+	}
 }
 
 func (t *AlbumTrack) id() string {
@@ -322,6 +351,7 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, 0, flaw.From(fmt.Errorf("failed to decode album items page response: %v", err)).Append(flawP)
 	}

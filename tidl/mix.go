@@ -19,7 +19,9 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/sliceutil"
 )
 
 func mixTrackDir(mixID string) string {
@@ -78,6 +80,7 @@ func (d *Downloader) prepareMixDir(m Mix) error {
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
 	}
 	if err := json.NewEncoder(f).Encode(m); nil != err {
+		flawP["mix"] = m.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode mix info: %v", err)).Append(flawP)
 	}
@@ -94,6 +97,14 @@ type Mix struct {
 	Tracks []MixTrack `json:"tracks"`
 }
 
+func (m *Mix) FlawP() flaw.P {
+	return flaw.P{
+		"id":     m.ID,
+		"title":  m.Title,
+		"tracks": sliceutil.Map(m.Tracks, func(t MixTrack) flaw.P { return t.FlawP() }),
+	}
+}
+
 type MixTrack struct {
 	ID         string  `json:"id"`
 	MixID      string  `json:"mix_id"`
@@ -102,6 +113,18 @@ type MixTrack struct {
 	ArtistName string  `json:"artist_name"`
 	Cover      string  `json:"cover"`
 	Version    *string `json:"version"`
+}
+
+func (t *MixTrack) FlawP() flaw.P {
+	return flaw.P{
+		"id":          t.ID,
+		"mix_id":      t.MixID,
+		"duration":    t.Duration,
+		"title":       t.Title,
+		"artist_name": t.ArtistName,
+		"cover":       t.Cover,
+		"version":     ptr.ValueOr(t.Version, ""),
+	}
 }
 
 func (t *MixTrack) id() string {
@@ -145,13 +168,14 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 		return nil, flaw.From(fmt.Errorf("failed to parse playlist URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 4)
-	params.Add("mixId", id)
-	params.Add("countryCode", "US")
-	params.Add("locale", "en_US")
-	params.Add("deviceType", "BROWSER")
-	reqURL.RawQuery = params.Encode()
+	reqParams := make(url.Values, 4)
+	reqParams.Add("mixId", id)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("locale", "en_US")
+	reqParams.Add("deviceType", "BROWSER")
+	reqURL.RawQuery = reqParams.Encode()
 	flawP["encoded_query_params"] = reqURL.RawQuery
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
@@ -177,7 +201,6 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 			return nil, flaw.From(fmt.Errorf("failed to send get mix info request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
@@ -198,6 +221,7 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 			}
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
@@ -218,6 +242,7 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
 		} else if ok {
 			return nil, ErrTooManyRequests

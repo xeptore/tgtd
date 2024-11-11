@@ -20,6 +20,7 @@ import (
 
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidl/auth"
 )
@@ -115,7 +116,7 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 	}()
 
 	if err := json.NewEncoder(f).Encode(t.info()); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "track_info": ptr.Of(t.info()).FlawP()}
 		return flaw.From(fmt.Errorf("failed to write track info: %v", err)).Append(flawP)
 	}
 
@@ -202,6 +203,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 		return ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return must.BeFlaw(err).Append(flawP)
 		} else if ok {
 			return ErrTooManyRequests
@@ -244,7 +246,10 @@ func (d *Downloader) writeCover(t Track, b []byte) (err error) {
 	}()
 
 	if _, err := io.Copy(f, bytes.NewReader(b)); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP := flaw.P{
+			"err_debug_tree": errutil.Tree(err).FlawP(),
+			"bytes":          string(b),
+		}
 		return flaw.From(fmt.Errorf("failed to write track cover: %v", err)).Append(flawP)
 	}
 
@@ -263,11 +268,11 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		return nil, flaw.From(fmt.Errorf("failed to parse page items URL: %v", err)).Append(flawP)
 	}
 
-	params := make(url.Values, 3)
-	params.Add("countryCode", "US")
-	params.Add("limit", strconv.Itoa(pageSize))
-	params.Add("offset", strconv.Itoa(page*pageSize))
-	reqURL.RawQuery = params.Encode()
+	reqParams := make(url.Values, 3)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("limit", strconv.Itoa(pageSize))
+	reqParams.Add("offset", strconv.Itoa(page*pageSize))
+	reqURL.RawQuery = reqParams.Encode()
 	flawP := flaw.P{"encoded_query_params": reqURL.RawQuery}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
@@ -337,10 +342,12 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err)
 		} else if ok {
 			return nil, ErrTooManyRequests
 		}
+
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
