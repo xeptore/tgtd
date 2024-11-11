@@ -39,9 +39,7 @@ const (
 	singlePartChunkSize    = 1024 * 1024
 )
 
-var (
-	ErrTooManyRequests = errors.New("too many requests")
-)
+var ErrTooManyRequests = errors.New("too many requests")
 
 type Downloader struct {
 	auth     *auth.Auth

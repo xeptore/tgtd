@@ -127,7 +127,25 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, vol tid
 		loopFlawPs = append(loopFlawPs, loopFlawP)
 		flawP["loop_payloads"] = loopFlawPs
 
-		caption := fmt.Sprintf("%s (%d) - Vol: %d (%d/%d)", vol.Album.Title, vol.Album.Year, vol.Number, idx.Next(), numBatches)
+		caption := []styling.StyledTextOption{
+			styling.Plain(vol.Album.Title),
+			styling.Plain(" "),
+		}
+		if nil != vol.Album.Version {
+			caption = append(
+				caption,
+				styling.Plain(fmt.Sprintf("(%s)", *vol.Album.Version)),
+				styling.Plain(" "),
+			)
+		}
+		caption = append(
+			caption,
+			styling.Plain(fmt.Sprintf("(%d)", vol.Album.Year)),
+			styling.Plain(" "),
+			styling.Plain(fmt.Sprintf("#%d", vol.Number)),
+			styling.Plain("\n"),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
+		)
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -138,7 +156,7 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, vol tid
 	return nil
 }
 
-func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string, caption string) (err error) {
+func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string, caption []styling.StyledTextOption) (err error) {
 	album := make([]message.MultiMediaOption, len(fileNames))
 
 	flawP := flaw.P{}
@@ -241,7 +259,13 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 		loopFlawPs = append(loopFlawPs, loopFlawP)
 		flawP["loop_payloads"] = loopFlawPs
 
-		caption := fmt.Sprintf("%s (%d - %d) - (%d/%d)", playlist.Title, playlist.CreatedAtYear, playlist.LastUpdatedAtYear, idx.Next(), numBatches)
+		caption := []styling.StyledTextOption{
+			styling.Plain(playlist.Title),
+			styling.Plain(" "),
+			styling.Plain(fmt.Sprintf("(%d - %d)", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
+			styling.Plain("\n"),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
+		}
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -273,7 +297,11 @@ func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
 		loopFlawPs = append(loopFlawPs, loopFlawP)
 		flawP["loop_payloads"] = loopFlawPs
 
-		caption := fmt.Sprintf("%s - (%d/%d)", mix.Title, idx.Next(), numBatches)
+		caption := []styling.StyledTextOption{
+			styling.Plain(mix.Title),
+			styling.Plain("\n"),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
+		}
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -358,7 +386,18 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		}
 		flawP["album_info"] = album.FlawP()
 
-		caption := fmt.Sprintf("%s (%d)", album.Title, album.Year)
+		caption := []styling.StyledTextOption{
+			styling.Plain(album.Title),
+			styling.Plain(" "),
+		}
+		if nil != album.Version {
+			caption = append(
+				caption,
+				styling.Plain(fmt.Sprintf("(%s)", *album.Version)),
+				styling.Plain(" "),
+				styling.Plain(fmt.Sprintf("(%d)", album.Year)),
+			)
+		}
 		doc, err := newTrackUpload().WithCaption(caption).uploadTrack(ctx, uploader, fileName, *track)
 		if nil != err {
 			if errutil.IsContext(ctx) {
@@ -382,15 +421,15 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 }
 
 type UploadTrack struct {
-	caption *string
+	caption []styling.StyledTextOption
 }
 
 func newTrackUpload() *UploadTrack {
 	return &UploadTrack{caption: nil}
 }
 
-func (u *UploadTrack) WithCaption(c string) *UploadTrack {
-	u.caption = &c
+func (u *UploadTrack) WithCaption(c []styling.StyledTextOption) *UploadTrack {
+	u.caption = c
 	return u
 }
 
@@ -420,7 +459,7 @@ func (u *UploadTrack) uploadTrack(ctx context.Context, uploader *uploader.Upload
 
 	var document *message.UploadedDocumentBuilder
 	if nil != u.caption {
-		document = message.UploadedDocument(upload, styling.Plain(*u.caption))
+		document = message.UploadedDocument(upload, u.caption...)
 	} else {
 		document = message.UploadedDocument(upload)
 	}
