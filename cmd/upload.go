@@ -146,6 +146,80 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, vol tid
 	return nil
 }
 
+func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
+	playlistDir := path.Join(path.Join(baseDir, "playlists", w.currentJob.ID))
+	flawP := flaw.P{"playlist_dir": playlistDir}
+
+	playlist, err := readDirInfo[tidl.Playlist](playlistDir)
+	if nil != err {
+		return must.BeFlaw(err).Append(flawP)
+	}
+
+	batchSize := mathutil.OptimalAlbumSize(len(playlist.Tracks))
+	batches := slices.Chunk(playlist.Tracks, batchSize)
+	numBatches := mathutil.CeilInts(len(playlist.Tracks), batchSize)
+	loopFlawPs := make([]flaw.P, 0, numBatches)
+	flawP["loop_payloads"] = loopFlawPs
+	idx := iterutil.Int(0)
+	for batch := range batches {
+		fileNames := sliceutil.Map(batch, func(track tidl.PlaylistTrack) string { return track.FileName() })
+		loopFlawP := flaw.P{"file_names": fileNames}
+		loopFlawPs = append(loopFlawPs, loopFlawP)
+		flawP["loop_payloads"] = loopFlawPs
+
+		caption := []styling.StyledTextOption{
+			styling.Plain(playlist.Title),
+			styling.Plain(" "),
+			styling.Plain(fmt.Sprintf("[%d - %d]", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
+			styling.Plain("\n"),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
+		}
+		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
+			}
+			return must.BeFlaw(err).Append(flawP)
+		}
+	}
+	return nil
+}
+
+func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
+	mixDir := path.Join(path.Join(baseDir, "mixes", w.currentJob.ID))
+	flawP := flaw.P{"mix_dir": mixDir}
+
+	mix, err := readDirInfo[tidl.Mix](mixDir)
+	if nil != err {
+		return must.BeFlaw(err).Append(flawP)
+	}
+
+	batchSize := mathutil.OptimalAlbumSize(len(mix.Tracks))
+	batches := slices.Chunk(mix.Tracks, batchSize)
+	numBatches := mathutil.CeilInts(len(mix.Tracks), batchSize)
+	loopFlawPs := make([]flaw.P, 0, numBatches)
+	flawP["loop_payloads"] = loopFlawPs
+	idx := iterutil.Int(0)
+	for batch := range batches {
+		fileNames := sliceutil.Map(batch, func(track tidl.MixTrack) string { return track.FileName() })
+		loopFlawP := flaw.P{"file_names": fileNames}
+		loopFlawPs = append(loopFlawPs, loopFlawP)
+		flawP["loop_payloads"] = loopFlawPs
+
+		caption := []styling.StyledTextOption{
+			styling.Plain(mix.Title),
+			styling.Plain("\n"),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
+		}
+		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
+			if errutil.IsContext(ctx) {
+				return ctx.Err()
+			}
+			return must.BeFlaw(err).Append(flawP)
+		}
+	}
+	return nil
+}
+
 func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string, caption []styling.StyledTextOption) (err error) {
 	album := make([]message.MultiMediaOption, len(fileNames))
 
@@ -224,80 +298,6 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 		}
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to send media album to specified target %q: %v", target, err)).Append(flawP)
-	}
-	return nil
-}
-
-func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
-	playlistDir := path.Join(path.Join(baseDir, "playlists", w.currentJob.ID))
-	flawP := flaw.P{"playlist_dir": playlistDir}
-
-	playlist, err := readDirInfo[tidl.Playlist](playlistDir)
-	if nil != err {
-		return must.BeFlaw(err).Append(flawP)
-	}
-
-	batchSize := mathutil.OptimalAlbumSize(len(playlist.Tracks))
-	batches := slices.Chunk(playlist.Tracks, batchSize)
-	numBatches := mathutil.CeilInts(len(playlist.Tracks), batchSize)
-	loopFlawPs := make([]flaw.P, 0, numBatches)
-	flawP["loop_payloads"] = loopFlawPs
-	idx := iterutil.Int(0)
-	for batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.PlaylistTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs = append(loopFlawPs, loopFlawP)
-		flawP["loop_payloads"] = loopFlawPs
-
-		caption := []styling.StyledTextOption{
-			styling.Plain(playlist.Title),
-			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("[%d - %d]", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
-			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
-		}
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-	}
-	return nil
-}
-
-func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
-	mixDir := path.Join(path.Join(baseDir, "mixes", w.currentJob.ID))
-	flawP := flaw.P{"mix_dir": mixDir}
-
-	mix, err := readDirInfo[tidl.Mix](mixDir)
-	if nil != err {
-		return must.BeFlaw(err).Append(flawP)
-	}
-
-	batchSize := mathutil.OptimalAlbumSize(len(mix.Tracks))
-	batches := slices.Chunk(mix.Tracks, batchSize)
-	numBatches := mathutil.CeilInts(len(mix.Tracks), batchSize)
-	loopFlawPs := make([]flaw.P, 0, numBatches)
-	flawP["loop_payloads"] = loopFlawPs
-	idx := iterutil.Int(0)
-	for batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.MixTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs = append(loopFlawPs, loopFlawP)
-		flawP["loop_payloads"] = loopFlawPs
-
-		caption := []styling.StyledTextOption{
-			styling.Plain(mix.Title),
-			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", idx.Next(), numBatches)),
-		}
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
 	}
 	return nil
 }
