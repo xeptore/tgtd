@@ -433,6 +433,7 @@ func (d *Downloader) playlistTracks(ctx context.Context, id string) ([]PlaylistT
 		loopFlawP := flaw.P{"page": i}
 		loopFlawPs = append(loopFlawPs, loopFlawP)
 		flawP["loop_flaw_payloads"] = loopFlawPs
+
 		pageTracks, rem, err := d.playlistTracksPage(ctx, id, i)
 		if nil != err {
 			switch {

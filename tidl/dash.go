@@ -93,6 +93,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 		partFileName := fileName + ".part." + strconv.Itoa(i)
 		loopFlawP := flaw.P{"part_file_name": partFileName}
 		loopFlawPs[i] = loopFlawP
+
 		if err := d.writePartToTrackFile(f, partFileName); nil != err {
 			return must.BeFlaw(err).Append(flawP)
 		}
@@ -179,6 +180,7 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 		segmentIdx := start + i
 		loopFlawP := flaw.P{"segment_index": segmentIdx}
 		loopFlawPs[i] = loopFlawP
+
 		link := strings.Replace(d.Info.Parts.InitializationURLTemplate, "$Number$", strconv.Itoa(segmentIdx), 1)
 		loopFlawP["link"] = link
 		if err := d.downloadSegment(ctx, link, f); nil != err {
