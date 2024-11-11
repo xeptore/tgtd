@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xeptore/flaw/v8"
 
+	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
@@ -46,11 +47,17 @@ var ErrTooManyRequests = errors.New("too many requests")
 type Downloader struct {
 	auth     *auth.Auth
 	basePath string
+	cache    *cache.Cache[*Album]
 	logger   zerolog.Logger
 }
 
-func NewDownloader(auth *auth.Auth, basePath string, logger zerolog.Logger) *Downloader {
-	return &Downloader{auth: auth, basePath: basePath, logger: logger}
+func NewDownloader(auth *auth.Auth, basePath string, cache *cache.Cache[*Album], logger zerolog.Logger) *Downloader {
+	return &Downloader{
+		auth:     auth,
+		basePath: basePath,
+		cache:    cache,
+		logger:   logger,
+	}
 }
 
 func (d *Downloader) download(ctx context.Context, t Track) error {
@@ -58,7 +65,12 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 		return err
 	}
 
-	if err := d.downloadCover(ctx, t); nil != err {
+	coverBytes, err := d.loadCover(ctx, t)
+	if nil != err {
+		return err
+	}
+
+	if err := d.writeCover(t, coverBytes); nil != err {
 		return err
 	}
 
@@ -129,21 +141,34 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 	return nil
 }
 
-func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
+func (d *Downloader) loadCover(ctx context.Context, t Track) ([]byte, error) {
+	cachedCover, err := d.cache.DownloadedCovers.Fetch(
+		t.cover(),
+		cache.DefaultDownloadedCoverTTL,
+		func() ([]byte, error) { return d.downloadCover(ctx, t) },
+	)
+	if nil != err {
+		return nil, err
+	}
+	return cachedCover.Value(), nil
+}
+
+func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err error) {
 	coverURL, err := url.JoinPath(fmt.Sprintf(coverURLFormat, strings.ReplaceAll(t.cover(), "-", "/")))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return flaw.From(fmt.Errorf("failed to join cover base URL with cover path: %v", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to join cover base URL with cover path: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"cover_url": coverURL}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return flaw.From(fmt.Errorf("failed to create get cover request: %v", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to create get cover request: %v", err)).Append(flawP)
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
@@ -152,12 +177,12 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
-			return ctx.Err()
+			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
-			return context.DeadlineExceeded
+			return nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to send get track cover request: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to send get track cover request: %v", err)).Append(flawP)
 		}
 	}
 	defer func() {
@@ -186,12 +211,12 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
-			return ctx.Err()
+			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
-			return context.DeadlineExceeded
+			return nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
 		}
 	}
 
@@ -199,29 +224,25 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
 		flawP["response_body"] = string(respBytes)
-		return flaw.From(errors.New("received 401 response")).Append(flawP)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
-		return ErrTooManyRequests
+		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
-			return must.BeFlaw(err).Append(flawP)
+			return nil, must.BeFlaw(err).Append(flawP)
 		} else if ok {
-			return ErrTooManyRequests
+			return nil, ErrTooManyRequests
 		}
 
 		flawP["response_body"] = string(respBytes)
-		return flaw.From(errors.New("unexpected 403 response")).Append(flawP)
+		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
 		flawP["response_body"] = string(respBytes)
-		return flaw.From(fmt.Errorf("unexpected status code received from get track cover: %d", code)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("unexpected status code received from get track cover: %d", code)).Append(flawP)
 	}
 
-	if err := d.writeCover(t, respBytes); nil != err {
-		return err
-	}
-
-	return nil
+	return respBytes, nil
 }
 
 func (d *Downloader) writeCover(t Track, b []byte) (err error) {
@@ -281,6 +302,7 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get page items request: %v", err)).Append(flawP)
 	}

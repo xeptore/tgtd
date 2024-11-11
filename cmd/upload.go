@@ -20,6 +20,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/iterutil"
 	"github.com/xeptore/tgtd/mathutil"
@@ -57,6 +58,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
+
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to send message: %v", err)).Append(flawP)
 		}
@@ -78,6 +80,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
+
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to send message: %v", err)).Append(flawP)
 		}
@@ -169,7 +172,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 			styling.Plain(" "),
 			styling.Plain(fmt.Sprintf("[%d - %d]", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
 			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", i, numBatches)),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
@@ -204,7 +207,7 @@ func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
 		caption := []styling.StyledTextOption{
 			styling.Plain(mix.Title),
 			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", i, numBatches)),
+			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
 		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
 			if errutil.IsContext(ctx) {
@@ -258,7 +261,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 
 			w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Uploading track")
 
-			builder := newTrackUploadBuilder()
+			builder := newTrackUploadBuilder(&w.cache.UploadedCovers)
 			if i == len(fileNames)-1 { // last track in this batch
 				builder.WithCaption(caption)
 			}
@@ -292,6 +295,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to send media album to specified target %q: %v", target, err)).Append(flawP)
 	}
@@ -377,7 +381,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 			styling.Plain(" "),
 			styling.Plain(fmt.Sprintf("[%d]", album.Year)),
 		}
-		doc, err := newTrackUploadBuilder().WithCaption(caption).uploadTrack(ctx, up, fileName, *track)
+		doc, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, up, fileName, *track)
 		if nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
@@ -393,6 +397,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to send media to specified target %q: %v", target, err)).Append(flawP)
 	}
@@ -401,10 +406,11 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 
 type TrackUploadBuilder struct {
 	caption []styling.StyledTextOption
+	cache   *cache.UploadedCoversCache
 }
 
-func newTrackUploadBuilder() *TrackUploadBuilder {
-	return &TrackUploadBuilder{caption: nil}
+func newTrackUploadBuilder(cache *cache.UploadedCoversCache) *TrackUploadBuilder {
+	return &TrackUploadBuilder{caption: nil, cache: cache}
 }
 
 func (u *TrackUploadBuilder) WithCaption(c []styling.StyledTextOption) *TrackUploadBuilder {
@@ -413,26 +419,39 @@ func (u *TrackUploadBuilder) WithCaption(c []styling.StyledTextOption) *TrackUpl
 }
 
 func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader.Uploader, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
-	coverBytes, err := os.ReadFile(fileName + ".jpg")
-	if nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err)).Append(flawP)
-	}
-	cover, err := uploader.FromBytes(ctx, "cover.jpg", coverBytes)
-	if nil != err {
-		if errutil.IsContext(ctx) {
-			return nil, ctx.Err()
+	coverFileName := fileName + ".jpg"
+	flawP := flaw.P{"cover_file_name": coverFileName}
+
+	cachedCover, err := u.cache.Fetch(coverFileName, cache.DefaultUploadedCoverTTL, func() (tg.InputFileClass, error) {
+		coverBytes, err := os.ReadFile(fileName + ".jpg")
+		if nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err)).Append(flawP)
 		}
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return nil, flaw.From(fmt.Errorf("failed to upload track cover: %v", err)).Append(flawP)
+
+		uploadedCover, err := uploader.FromBytes(ctx, "cover.jpg", coverBytes)
+		if nil != err {
+			if errutil.IsContext(ctx) {
+				return nil, ctx.Err()
+			}
+
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to upload track cover: %v", err)).Append(flawP)
+		}
+		return uploadedCover, nil
+	})
+	if nil != err {
+		return nil, err
 	}
+	cover := cachedCover.Value()
 
 	upload, err := uploader.FromPath(ctx, fileName)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to upload track file: %v", err)).Append(flawP)
 	}
 

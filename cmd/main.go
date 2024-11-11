@@ -33,6 +33,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"gopkg.in/matryer/try.v1"
 
+	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/constant"
 	"github.com/xeptore/tgtd/ctxutil"
@@ -143,7 +144,7 @@ func run(cliCtx *cli.Context) (err error) {
 		return fmt.Errorf("failed to read credentials directory: %v", err)
 	} else if errors.Is(err, os.ErrNotExist) {
 		logger.Warn().Msg("Credentials directory does not exist. Creating...")
-		if err := os.MkdirAll(cfg.DownloadBaseDir, 0o0755); nil != err {
+		if err := os.MkdirAll(cfg.CredsDir, 0o0755); nil != err {
 			return fmt.Errorf("failed to create download base directory: %v", err)
 		}
 		logger.Info().Msg("Credentials directory created")
@@ -178,6 +179,7 @@ func run(cliCtx *cli.Context) (err error) {
 		sender:     nil,
 		tidlAuth:   nil,
 		currentJob: nil,
+		cache:      cache.New[*tidl.Album](),
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
@@ -666,6 +668,7 @@ type Worker struct {
 	sender     *message.Sender
 	tidlAuth   *auth.Auth
 	currentJob *Job
+	cache      *cache.Cache[*tidl.Album]
 	logger     zerolog.Logger
 }
 
@@ -766,7 +769,12 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	w.currentJob = &job
 
 	const downloadBaseDir = "downloads"
-	downloader := tidl.NewDownloader(w.tidlAuth, downloadBaseDir, w.logger.With().Logger())
+	downloader := tidl.NewDownloader(
+		w.tidlAuth,
+		downloadBaseDir,
+		w.cache,
+		w.logger.With().Logger(),
+	)
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
@@ -777,7 +785,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
@@ -809,7 +817,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		if err := w.uploadPlaylist(jobCtx, downloadBaseDir); nil != err {
@@ -828,7 +836,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 	case "album":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download album")
@@ -836,7 +844,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
@@ -868,14 +876,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		if err := w.uploadAlbum(jobCtx, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Album upload finished")
@@ -883,7 +891,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 	case "track":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download track")
@@ -891,7 +899,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
@@ -923,14 +931,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		if err := w.uploadSingle(jobCtx, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Track upload finished")
@@ -938,7 +946,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 	case "mix":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download mix")
@@ -946,7 +954,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		err = try.Do(func(attempt int) (retry bool, err error) {
@@ -978,14 +986,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		if err := w.uploadMix(jobCtx, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Mix upload finished")
@@ -993,7 +1001,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			if errors.Is(jobCtx.Err(), context.Canceled) {
 				return jobCtx.Err()
 			}
-			return flaw.From(fmt.Errorf("failed to send message: %w", err))
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 	default:
 		panic("unsupported link kind to download: " + kind)

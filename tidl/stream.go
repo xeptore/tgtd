@@ -44,6 +44,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get track stream URLs request: %v", err)).Append(flawP)
 	}

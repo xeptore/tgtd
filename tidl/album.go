@@ -16,6 +16,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
@@ -34,7 +35,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		return err
 	}
 
-	album, err := d.albumInfo(ctx, id)
+	album, err := d.loadAlbumInfo(ctx, id)
 	if nil != err {
 		return err
 	}
@@ -128,7 +129,19 @@ func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
 	return nil
 }
 
-func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err error) {
+func (d *Downloader) loadAlbumInfo(ctx context.Context, id string) (*Album, error) {
+	cachedAlbum, err := d.cache.Albums.Fetch(
+		id,
+		cache.DefaultAlbumTTL,
+		func() (*Album, error) { return d.fetchAlbumInfo(ctx, id) },
+	)
+	if nil != err {
+		return nil, err
+	}
+	return cachedAlbum.Value(), nil
+}
+
+func (d *Downloader) fetchAlbumInfo(ctx context.Context, id string) (a *Album, err error) {
 	albumURL, err := url.JoinPath(fmt.Sprintf(albumAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -152,6 +165,7 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get album info request: %v", err)).Append(flawP)
 	}

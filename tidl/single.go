@@ -166,6 +166,7 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
 	}

@@ -53,7 +53,7 @@ func (d *Downloader) Track(ctx context.Context, id string) error {
 		return err
 	}
 
-	album, err := d.albumInfo(ctx, track.Album.ID)
+	album, err := d.loadAlbumInfo(ctx, track.Album.ID)
 	if nil != err {
 		return err
 	}

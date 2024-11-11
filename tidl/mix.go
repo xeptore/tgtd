@@ -181,6 +181,7 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
+
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to create get mix info request: %v", err)).Append(flawP)
 	}
