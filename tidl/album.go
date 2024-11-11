@@ -16,6 +16,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/must"
@@ -34,10 +35,11 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		return err
 	}
 
-	album, err := d.albumInfo(ctx, id)
+	album, err := d.loadAlbumInfo(ctx, id)
 	if nil != err {
 		return err
 	}
+	d.cache.Albums.Set(id, *album, cache.DefaultAlbumTTL)
 
 	vols := make([]Volume, len(volumeTracks))
 	for i, v := range volumeTracks {
@@ -128,7 +130,15 @@ func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
 	return nil
 }
 
-func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err error) {
+func (d *Downloader) loadAlbumInfo(ctx context.Context, id string) (*Album, error) {
+	a := d.cache.Albums.Get(id)
+	if nil != a {
+		return ptr.Of(a.Value()), nil
+	}
+	return d.fetchAlbumInfo(ctx, id)
+}
+
+func (d *Downloader) fetchAlbumInfo(ctx context.Context, id string) (a *Album, err error) {
 	albumURL, err := url.JoinPath(fmt.Sprintf(albumAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}

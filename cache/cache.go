@@ -7,7 +7,10 @@ import (
 	"github.com/karlseguin/ccache/v3"
 )
 
-var DefaultDownloadedCoverTTL = 5 * time.Minute
+var (
+	DefaultDownloadedCoverTTL = 5 * time.Minute
+	DefaultAlbumTTL           = 5 * time.Minute
+)
 
 type Cache[TAlbum any] struct {
 	Albums           *ccache.Cache[TAlbum]

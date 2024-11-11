@@ -65,7 +65,7 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 		return err
 	}
 
-	if coverBytes, err := d.fetchCover(ctx, t); nil != err {
+	if coverBytes, err := d.loadCover(ctx, t); nil != err {
 		return err
 	} else {
 		d.cache.DownloadedCovers.Set(t.cover(), coverBytes, cache.DefaultDownloadedCoverTTL)
@@ -141,7 +141,7 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 	return nil
 }
 
-func (d *Downloader) fetchCover(ctx context.Context, t Track) (b []byte, err error) {
+func (d *Downloader) loadCover(ctx context.Context, t Track) ([]byte, error) {
 	c := d.cache.DownloadedCovers.Get(t.cover())
 	if nil != c {
 		return c.Value(), nil
