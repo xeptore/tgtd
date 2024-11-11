@@ -259,7 +259,7 @@ type AlbumTrack struct {
 	Version      *string
 }
 
-func (t AlbumTrack) FlawP() flaw.P {
+func (t *AlbumTrack) FlawP() flaw.P {
 	return flaw.P{
 		"id":            t.ID,
 		"number":        t.Number,

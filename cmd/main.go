@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -138,6 +139,16 @@ func run(cliCtx *cli.Context) (err error) {
 		return errors.New("failed to parse APP_ID environment variable to integer")
 	}
 
+	if _, err := os.ReadDir(cfg.CredsDir); nil != err && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to read credentials directory: %v", err)
+	} else if errors.Is(err, os.ErrNotExist) {
+		logger.Warn().Msg("Credentials directory does not exist. Creating...")
+		if err := os.MkdirAll(cfg.DownloadBaseDir, 0o0755); nil != err {
+			return fmt.Errorf("failed to create download base directory: %v", err)
+		}
+		logger.Info().Msg("Credentials directory created")
+	}
+
 	d := tg.NewUpdateDispatcher()
 	d.OnNewMessage(func(context.Context, tg.Entities, *tg.UpdateNewMessage) error { return nil })
 	updateHandler := updates.New(updates.Config{Handler: d}) //nolint:exhaustruct
@@ -147,7 +158,7 @@ func run(cliCtx *cli.Context) (err error) {
 		appHash,
 		//nolint:exhaustruct
 		telegram.Options{
-			SessionStorage: &session.FileStorage{Path: "session.json"},
+			SessionStorage: &session.FileStorage{Path: path.Join(cfg.CredsDir, "session.json")},
 			UpdateHandler:  updateHandler,
 			MaxRetries:     -1,
 			AckBatchSize:   100,
@@ -204,7 +215,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 		}
 
-		tidlAuth, err := auth.Load(ctx)
+		tidlAuth, err := auth.Load(ctx, cfg.CredsDir)
 		if nil != err {
 			switch {
 			case errors.Is(ctx.Err(), context.Canceled):
@@ -220,7 +231,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 
 			logger.Debug().Msg("Need to authenticate TIDAL. Initiating TIDAL authorization flow")
-			authorization, wait, err := auth.NewAuthorizer(ctx)
+			authorization, wait, err := auth.NewAuthorizer(ctx, cfg.CredsDir)
 			if nil != err {
 				switch {
 				case errors.Is(ctx.Err(), context.Canceled):
@@ -320,7 +331,7 @@ func run(cliCtx *cli.Context) (err error) {
 
 		logger.Debug().Msg("TIDAL access token verified")
 		w.tidlAuth = tidlAuth
-		d.OnNewMessage(buildOnMessage(w, msgCtx))
+		d.OnNewMessage(buildOnMessage(w, msgCtx, *cfg))
 
 		logger.Info().Msg("Bot is running")
 		<-ctx.Done()
@@ -340,7 +351,7 @@ func run(cliCtx *cli.Context) (err error) {
 	})
 }
 
-func buildOnMessage(w *Worker, msgCtx context.Context) func(context.Context, tg.Entities, *tg.UpdateNewMessage) error {
+func buildOnMessage(w *Worker, msgCtx context.Context, cfg config.Config) func(context.Context, tg.Entities, *tg.UpdateNewMessage) error {
 	return func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
 		m, ok := update.Message.(*tg.Message)
 		if !ok || m.Out {
@@ -364,7 +375,7 @@ func buildOnMessage(w *Worker, msgCtx context.Context) func(context.Context, tg.
 		}
 
 		if msg == "/authorize" {
-			authorization, wait, err := auth.NewAuthorizer(ctx)
+			authorization, wait, err := auth.NewAuthorizer(ctx, cfg.CredsDir)
 			if nil != err {
 				switch {
 				case errors.Is(ctx.Err(), context.Canceled):

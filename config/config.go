@@ -11,6 +11,7 @@ import (
 type Config struct {
 	DownloadBaseDir string  `json:"download_base_dir" yaml:"download_base_dir"`
 	TargetPeerID    string  `json:"target_peer_id"    yaml:"target_peer_id"`
+	CredsDir        string  `json:"credentials_dir"   yaml:"credentials_dir"`
 	FromIDs         []int64 `json:"from_ids"          yaml:"from_ids"`
 }
 
@@ -21,6 +22,10 @@ func (cfg *Config) validate() error {
 
 	if cfg.TargetPeerID == "" {
 		return errors.New("target peer ID is empty")
+	}
+
+	if cfg.CredsDir == "" {
+		cfg.CredsDir = ".creds"
 	}
 
 	return nil

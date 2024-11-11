@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ const (
 	clientID      = "7m7Ap0JC9j1cOM3n"
 	clientSecret  = "vRAdA108tlvkJpTsGZS8rGZ7xTlbJ0qaZ2K9saEzsgY=" //nolint:gosec
 	baseURL       = "https://auth.tidal.com/v1/oauth2"
-	tokenFilePath = "token.json"
+	tokenFileName = "token.json"
 )
 
 var ErrUnauthorized = errors.New("Unauthorized")
@@ -41,8 +42,8 @@ type Auth struct {
 	Creds Credentials
 }
 
-func Load(ctx context.Context) (*Auth, error) {
-	creds, err := load(ctx)
+func Load(ctx context.Context, credsDir string) (*Auth, error) {
+	creds, err := load(ctx, path.Join(credsDir, tokenFileName))
 	if nil != err {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func (f File) flawP() flaw.P {
 	}
 }
 
-func load(ctx context.Context) (creds *Credentials, err error) {
+func load(ctx context.Context, tokenFilePath string) (creds *Credentials, err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_RDONLY, 0o0644)
 	if nil != err {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -98,7 +99,7 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 	}
 
 	if time.Now().Unix() > content.ExpiresAt {
-		return handleUnauthorized(ctx, content.RefreshToken)
+		return handleUnauthorized(ctx, content.RefreshToken, tokenFilePath)
 	}
 
 	if err := verifyAccessToken(ctx, content.AccessToken); nil != err {
@@ -108,7 +109,7 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, context.DeadlineExceeded
 		case errors.Is(err, ErrUnauthorized):
-			return handleUnauthorized(ctx, content.RefreshToken)
+			return handleUnauthorized(ctx, content.RefreshToken, tokenFilePath)
 		case errutil.IsFlaw(err):
 			return nil, err
 		default:
@@ -118,7 +119,7 @@ func load(ctx context.Context) (creds *Credentials, err error) {
 	return ptr.Of(Credentials(content)), nil
 }
 
-func handleUnauthorized(ctx context.Context, rt string) (*Credentials, error) {
+func handleUnauthorized(ctx context.Context, rt string, tokenFilePath string) (*Credentials, error) {
 	refreshResult, err := refreshToken(ctx, rt)
 	if nil != err {
 		return nil, err
@@ -128,13 +129,13 @@ func handleUnauthorized(ctx context.Context, rt string) (*Credentials, error) {
 		RefreshToken: rt,
 		ExpiresAt:    refreshResult.ExpiresAt,
 	}
-	if err := save(newFileContent); nil != err {
+	if err := save(newFileContent, tokenFilePath); nil != err {
 		return nil, err
 	}
 	return ptr.Of(Credentials(newFileContent)), nil
 }
 
-func save(content File) (err error) {
+func save(content File, tokenFilePath string) (err error) {
 	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -399,7 +400,7 @@ type AuthorizationResult struct {
 	ExpiresIn time.Duration
 }
 
-func NewAuthorizer(ctx context.Context) (link *AuthorizationResult, wait <-chan result.Of[Auth], err error) {
+func NewAuthorizer(ctx context.Context, credsDir string) (link *AuthorizationResult, wait <-chan result.Of[Auth], err error) {
 	res, err := issueAuthorizationRequest(ctx)
 	if nil != err {
 		return nil, nil, err
@@ -450,7 +451,7 @@ func NewAuthorizer(ctx context.Context) (link *AuthorizationResult, wait <-chan 
 				}
 				f := File(*creds)
 				flawP := flaw.P{"creds": f.flawP()}
-				if err := save(f); nil != err {
+				if err := save(f, path.Join(credsDir, tokenFileName)); nil != err {
 					flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 					done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
 					return
