@@ -16,7 +16,6 @@ linters:
     - gocognit
     - gocyclo
     - err113
-    - gomnd
     - ireturn
     - lll
     - maintidx

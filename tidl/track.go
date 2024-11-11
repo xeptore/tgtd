@@ -53,7 +53,12 @@ func (d *Downloader) Track(ctx context.Context, id string) error {
 		return err
 	}
 
-	if err := track.createDir(d.basePath); nil != err {
+	album, err := d.albumInfo(ctx, track.Album.ID)
+	if nil != err {
+		return err
+	}
+
+	if err := d.prepareTrackDir(track, *album); nil != err {
 		return err
 	}
 

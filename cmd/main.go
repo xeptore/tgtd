@@ -320,6 +320,7 @@ func run(cliCtx *cli.Context) (err error) {
 
 		logger.Info().Msg("Bot is running")
 		<-ctx.Done()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		logger.Debug().Msg("Stopping bot due to received signal")

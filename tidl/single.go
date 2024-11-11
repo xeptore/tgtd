@@ -23,21 +23,32 @@ import (
 )
 
 type Artist struct {
-	Name string
+	Name string `json:"name"`
 }
 
 type Album struct {
-	ID    string
-	Cover string
+	ID    string `json:"id"`
+	Year  int    `json:"year"`
+	Title string `json:"title"`
+	Cover string `json:"cover"`
+}
+
+func (a Album) FlawP() flaw.P {
+	return flaw.P{
+		"id":    a.ID,
+		"year":  a.Year,
+		"title": a.Title,
+		"cover": a.Cover,
+	}
 }
 
 type SingleTrack struct {
-	ID       string
-	Duration int
-	Title    string
-	Artist   Artist
-	Album    Album
-	Version  *string
+	ID       string  `json:"id"`
+	Duration int     `json:"duration"`
+	Title    string  `json:"title"`
+	Artist   Artist  `json:"artist"`
+	Album    Album   `json:"album"`
+	Version  *string `json:"version"`
 }
 
 func (t *SingleTrack) id() string {
@@ -54,15 +65,61 @@ func (t *SingleTrack) FileName() string {
 	return path.Join("singles", t.ID, fileName)
 }
 
-func (t *SingleTrack) createDir(basePath string) error {
-	dirPath := filepath.Dir(path.Join(basePath, t.FileName()))
-	flawP := flaw.P{"file_path": dirPath}
-
-	if err := os.MkdirAll(dirPath, 0o755); nil != err {
+func (d *Downloader) prepareTrackDir(t Track, a Album) error {
+	trackDir := filepath.Dir(path.Join(d.basePath, t.FileName()))
+	flawP := flaw.P{"track_dir": trackDir}
+	if err := os.RemoveAll(trackDir); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to delete possibly existing track directory: %v", err)).Append(flawP)
+	}
+	if err := os.MkdirAll(trackDir, 0o0755); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track directory: %v", err)).Append(flawP)
 	}
+
+	infoFilePath := path.Join(trackDir, "album.json")
+	flawP["info_file_path"] = infoFilePath
+	f, err := os.OpenFile(infoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
+	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to create track album info file: %v", err)).Append(flawP)
+	}
+	if err := json.NewEncoder(f).Encode(a); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to encode track album info: %v", err)).Append(flawP)
+	}
+	if err := f.Sync(); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to sync track album info file: %v", err)).Append(flawP)
+	}
 	return nil
+}
+
+func ReadTrackAlbumInfoFile(trackDir string) (inf *Album, err error) {
+	infoFilePath := path.Join(trackDir, "album.json")
+	f, err := os.OpenFile(infoFilePath, os.O_RDONLY, 0o644)
+	if nil != err {
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to open track album info file: %v", err)).Append(flawP)
+	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			closeErr = flaw.From(fmt.Errorf("failed to close track album info file: %v", closeErr)).Append(flawP)
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+
+	if err := json.NewDecoder(f).Decode(&inf); nil != err {
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to unmarshal track album info file: %v", err)).Append(flawP)
+	}
+
+	return inf, nil
 }
 
 func (t *SingleTrack) cover() string {
@@ -244,6 +301,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 		},
 		Album: Album{
 			ID:    strconv.Itoa(responseBody.Album.ID),
+			Year:  0,  // not provided by this API
+			Title: "", // not provided by this API
 			Cover: responseBody.Album.Cover,
 		},
 		Version: responseBody.Version,

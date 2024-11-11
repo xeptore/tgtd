@@ -49,10 +49,10 @@ func IsTooManyErrorResponse(resp *http.Response) (bool, error) {
 		XMLName   xml.Name `xml:"Error"`
 		Code      string   `xml:"Code"`
 		Message   string   `xml:"Message"`
-		RequestId string   `xml:"RequestId"`
-		HostId    string   `xml:"HostId"`
+		RequestID string   `xml:"RequestId"`
+		HostID    string   `xml:"HostId"`
 	}
-	if err := xml.Unmarshal([]byte(bodyBytes), &responseBody); nil != err {
+	if err := xml.Unmarshal(bodyBytes, &responseBody); nil != err {
 		flawP := flaw.P{"err_debug_tree": Tree(err).FlawP()}
 		return false, flaw.From(fmt.Errorf("failed to unmarshal XML response body: %v", err)).Append(flawP)
 	}
