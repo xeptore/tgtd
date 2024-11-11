@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -179,42 +178,33 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 			}
 		}
 	}()
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read album info response body: %v", err)).Append(flawP)
+		}
+	}
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
-			case errutil.IsFlaw(err):
-				return nil, err
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-		if ok {
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			return nil, must.BeFlaw(err)
+		} else if ok {
 			return nil, ErrTooManyRequests
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get album info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get album info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
@@ -223,16 +213,9 @@ func (d *Downloader) albumInfo(ctx context.Context, id string) (a *Album, err er
 		ReleaseDate string `json:"releaseDate"`
 		Cover       string `json:"cover"`
 	}
-	if err := json.NewDecoder(resp.Body).DecodeContext(ctx, &respBody); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
-		}
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode album info response: %v", err)).Append(flawP)
 	}
 
 	releaseDate, err := time.Parse("2006-01-02", respBody.ReleaseDate)
@@ -301,7 +284,7 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 	}
 	flawP := flaw.P{"url": albumURL}
 
-	response, err := d.getPagedItems(ctx, albumURL, page)
+	respBytes, err := d.getPagedItems(ctx, albumURL, page)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -316,25 +299,6 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 			panic(errutil.UnknownError(err))
 		}
 	}
-	defer func() {
-		if closeErr := response.Body.Close(); nil != closeErr {
-			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close get album page items response body: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = closeErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context was ended")).Join(closeErr)
-			case errors.Is(err, context.DeadlineExceeded):
-				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errutil.IsFlaw(err):
-				err = must.BeFlaw(err).Join(closeErr)
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-	}()
-	flawP["response"] = errutil.HTTPResponseFlawPayload(response)
 
 	var responseBody struct {
 		TotalNumberOfItems int `json:"totalNumberOfItems"`
@@ -357,19 +321,13 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 			} `json:"item"`
 		} `json:"items"`
 	}
-	if err := json.NewDecoder(response.Body).DecodeContext(ctx, &responseBody); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			return nil, 0, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, 0, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, 0, flaw.From(fmt.Errorf("failed to decode album response: %v", err)).Append(flawP)
-		}
+	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, 0, flaw.From(fmt.Errorf("failed to decode album items page response: %v", err)).Append(flawP)
 	}
-	thisPageItems := len(responseBody.Items)
-	if thisPageItems == 0 {
+
+	thisPageItemsCount := len(responseBody.Items)
+	if thisPageItemsCount == 0 {
 		return nil, 0, os.ErrNotExist
 	}
 
@@ -398,7 +356,7 @@ func (d *Downloader) albumTracksPage(ctx context.Context, id string, page int) (
 		tracks = append(tracks, albumTrack)
 	}
 
-	return tracks, responseBody.TotalNumberOfItems - (thisPageItems + page*pageSize), nil
+	return tracks, responseBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
 type AlbumVolumes = [][]AlbumTrack

@@ -1,6 +1,7 @@
 package tidl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -225,54 +225,6 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 			return flaw.From(fmt.Errorf("failed to send get track part request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
-
-	switch status := resp.StatusCode; status {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return flaw.From(errors.New("received 401 response")).Append(flawP)
-	case http.StatusTooManyRequests:
-		return ErrTooManyRequests
-	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return context.DeadlineExceeded
-			case errutil.IsFlaw(err):
-				return err
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-		if ok {
-			return ErrTooManyRequests
-		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read get stream segment response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return flaw.From(errors.New("unexpected 403 response")).Append(flawP)
-	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read get track part response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return flaw.From(fmt.Errorf("unexpected status code received from get track part: %d", status)).Append(flawP)
-	}
-
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
@@ -282,6 +234,10 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 				err = closeErr
 			case errutil.IsContext(ctx):
 				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
 			case errutil.IsFlaw(err):
 				err = must.BeFlaw(err).Join(closeErr)
 			default:
@@ -289,11 +245,43 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 			}
 		}
 	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	if n, err := io.Copy(f, resp.Body); nil != err {
-		if errutil.IsContext(ctx) {
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
 			return ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to read get segment response body: %v", err)).Append(flawP)
 		}
+	}
+
+	switch status := resp.StatusCode; status {
+	case http.StatusOK:
+	case http.StatusUnauthorized:
+		flawP["response_body"] = string(respBytes)
+		return flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return ErrTooManyRequests
+	case http.StatusForbidden:
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			return must.BeFlaw(err).Append(flawP)
+		} else if ok {
+			return ErrTooManyRequests
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return flaw.From(errors.New("unexpected 403 response")).Append(flawP)
+	default:
+		flawP["response_body"] = string(respBytes)
+		return flaw.From(fmt.Errorf("unexpected status code received from get track part: %d", status)).Append(flawP)
+	}
+
+	if n, err := io.Copy(f, bytes.NewReader(respBytes)); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to write track part to file: %v", err)).Append(flawP)
 	} else if n == 0 {

@@ -1,6 +1,7 @@
 package tidl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/rs/zerolog"
-	"github.com/samber/lo"
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
@@ -106,13 +106,10 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 		if closeErr := f.Close(); nil != closeErr {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
 			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = closeErr
-			case errutil.IsFlaw(err):
+			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
-			default:
-				panic(errutil.UnknownError(err))
+			} else {
+				err = closeErr
 			}
 		}
 	}()
@@ -137,6 +134,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 		return flaw.From(fmt.Errorf("failed to join cover base URL with cover path: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"cover_url": coverURL}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
@@ -157,13 +155,13 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 			return context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to send get cover request: %v", err)).Append(flawP)
+			return flaw.From(fmt.Errorf("failed to send get track cover request: %v", err)).Append(flawP)
 		}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close get cover response body: %v", closeErr)).Append(flawP)
+			closeErr = flaw.From(fmt.Errorf("failed to close get track cover response body: %v", closeErr)).Append(flawP)
 			switch {
 			case nil == err:
 				err = closeErr
@@ -182,60 +180,48 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (err error) {
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	switch code := resp.StatusCode; code {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return context.DeadlineExceeded
+		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
 		}
-		flawP["response_body"] = string(resBytes)
+	}
+
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusUnauthorized:
+		flawP["response_body"] = string(respBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return ErrTooManyRequests
 	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
-			switch {
-			case errutil.IsContext(ctx):
-				return ctx.Err()
-			case errors.Is(err, context.DeadlineExceeded):
-				return context.DeadlineExceeded
-			case errutil.IsFlaw(err):
-				return err
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-		if ok {
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			return must.BeFlaw(err).Append(flawP)
+		} else if ok {
 			return ErrTooManyRequests
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read track cover response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
+
+		flawP["response_body"] = string(respBytes)
+		return flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return flaw.From(fmt.Errorf("unexpected status code received from get track cover: %d", code)).Append(flawP)
 	}
 
-	if err := d.writeCover(t, resp.Body); nil != err {
+	if err := d.writeCover(t, respBytes); nil != err {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
+func (d *Downloader) writeCover(t Track, b []byte) (err error) {
 	f, err := os.OpenFile(
 		path.Join(d.basePath, t.FileName()+".jpg"),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
@@ -249,25 +235,15 @@ func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
 		if closeErr := f.Close(); nil != closeErr {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
 			closeErr = flaw.From(fmt.Errorf("failed to close track cover file: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = closeErr
-			case errors.Is(err, context.DeadlineExceeded):
-				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errors.Is(err, context.Canceled):
-				err = flaw.From(errors.New("context has been canceled")).Join(closeErr)
-			case errutil.IsFlaw(err):
+			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
-			default:
-				panic(errutil.UnknownError(err))
+			} else {
+				err = closeErr
 			}
 		}
 	}()
 
-	if _, err := io.Copy(f, r); nil != err {
-		if err, ok := errutil.IsAny(err, context.DeadlineExceeded, context.Canceled); ok {
-			return err
-		}
+	if _, err := io.Copy(f, bytes.NewReader(b)); nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return flaw.From(fmt.Errorf("failed to write track cover: %v", err)).Append(flawP)
 	}
@@ -280,30 +256,32 @@ func (d *Downloader) writeCover(t Track, r io.Reader) (err error) {
 	return nil
 }
 
-func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page int) (*http.Response, error) {
+func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page int) ([]byte, error) {
 	reqURL, err := url.Parse(itemsURL)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return nil, flaw.From(fmt.Errorf("failed to parse items URL: %v", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to parse page items URL: %v", err)).Append(flawP)
 	}
+
 	params := make(url.Values, 3)
 	params.Add("countryCode", "US")
 	params.Add("limit", strconv.Itoa(pageSize))
 	params.Add("offset", strconv.Itoa(page*pageSize))
 	reqURL.RawQuery = params.Encode()
 	flawP := flaw.P{"encoded_query_params": reqURL.RawQuery}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to create get track info request: %v", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to create get page items request: %v", err)).Append(flawP)
 	}
-	request.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
+	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
 	client := http.Client{Timeout: 5 * time.Minute} // TODO: set it to a reasonable value
-	resp, err := client.Do(request)
+	resp, err := client.Do(req)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -312,56 +290,63 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 			return nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to send get track info request: %v", err)).Append(flawP)
+			return nil, flaw.From(fmt.Errorf("failed to send get page items request: %v", err)).Append(flawP)
 		}
 	}
-	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
-
-	switch code := resp.StatusCode; code {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
-		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
-	case http.StatusTooManyRequests:
-		return nil, ErrTooManyRequests
-	case http.StatusForbidden:
-		ok, err := errutil.IsTooManyErrorResponse(resp)
-		if nil != err {
+	defer func() {
+		if closeErr := resp.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close get page items response body: %v", closeErr)).Append(flawP)
 			switch {
+			case nil == err:
+				err = closeErr
 			case errutil.IsContext(ctx):
-				return nil, ctx.Err()
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
 			case errors.Is(err, context.DeadlineExceeded):
-				return nil, context.DeadlineExceeded
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
 			case errutil.IsFlaw(err):
-				return nil, err
+				err = must.BeFlaw(err).Join(closeErr)
 			default:
 				panic(errutil.UnknownError(err))
 			}
 		}
-		if ok {
+	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to read get page items response body: %v", err)).Append(flawP)
+		}
+	}
+
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusUnauthorized:
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return nil, ErrTooManyRequests
+	case http.StatusForbidden:
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			return nil, must.BeFlaw(err)
+		} else if ok {
 			return nil, ErrTooManyRequests
 		}
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err && !errors.Is(err, io.EOF) {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get tracks page items response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = lo.Ternary(len(resBytes) > 0, string(resBytes), "")
-		return nil, flaw.From(fmt.Errorf("unexpected 403 response: %s", string(resBytes))).Append(flawP)
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
-		resBytes, err := io.ReadAll(resp.Body)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track info response body: %v", err)).Append(flawP)
-		}
-		flawP["response_body"] = string(resBytes)
+		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
-	return resp, nil
+	return respBytes, nil
 }
