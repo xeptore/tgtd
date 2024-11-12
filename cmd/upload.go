@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/goccy/go-json"
 	"github.com/gotd/td/telegram/message"
@@ -329,14 +328,21 @@ func readDirInfo[T any](dirPath string) (inf *T, err error) {
 	return inf, nil
 }
 
-func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
-	trackDir := filepath.Join(basePath, "singles", w.currentJob.ID)
-	flawP := flaw.P{"track_dir": trackDir}
-	entries, err := os.ReadDir(trackDir)
+func (w *Worker) uploadSingle(ctx context.Context, basePath string) (err error) {
+	fileName := filepath.Join(basePath, "singles", w.currentJob.ID, "audio")
+	flawP := flaw.P{"file_name": fileName}
+
+	track, err := tidl.ReadTrackInfoFile(fileName)
 	if nil != err {
-		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
+		return must.BeFlaw(err).Append(flawP)
 	}
+	flawP["track_info"] = track.FlawP()
+
+	album, err := tidl.ReadTrackAlbumInfoFile(filepath.Dir(fileName))
+	if nil != err {
+		return must.BeFlaw(err).Append(flawP)
+	}
+	flawP["album_info"] = album.FlawP()
 
 	up, cancel := w.newUploader(ctx)
 	defer func() {
@@ -356,41 +362,17 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 		}
 	}()
 
-	var document *message.UploadedDocumentBuilder
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
-			continue
+	caption := []styling.StyledTextOption{
+		styling.Plain(album.Title),
+		styling.Plain(" "),
+		styling.Plain(fmt.Sprintf("[%d]", album.Year)),
+	}
+	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, up, fileName, *track)
+	if nil != err {
+		if errutil.IsContext(ctx) {
+			return ctx.Err()
 		}
-
-		fileName := filepath.Join(trackDir, strings.TrimSuffix(entry.Name(), ".json"))
-		flawP["track_file_name"] = fileName
-
-		track, err := tidl.ReadTrackInfoFile(fileName)
-		if nil != err {
-			return must.BeFlaw(err).Append(flawP)
-		}
-		flawP["track_info"] = track.FlawP()
-
-		album, err := tidl.ReadTrackAlbumInfoFile(trackDir)
-		if nil != err {
-			return must.BeFlaw(err).Append(flawP)
-		}
-		flawP["album_info"] = album.FlawP()
-
-		caption := []styling.StyledTextOption{
-			styling.Plain(album.Title),
-			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("[%d]", album.Year)),
-		}
-		doc, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, up, fileName, *track)
-		if nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
-			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-		document = doc
-		break
+		return must.BeFlaw(err).Append(flawP)
 	}
 
 	target := w.config.TargetPeerID
