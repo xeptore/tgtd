@@ -28,7 +28,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: read
@@ -58,7 +58,7 @@ jobs:
     name: Build Docker Image
     needs:
       - lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       packages: write
       contents: read
