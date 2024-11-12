@@ -32,7 +32,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 		return err
 	}
 
-	wg, ctx := errgroup.WithContext(ctx)
+	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(ratelimit.MultipartTrackDownloadConcurrency)
 
 	numBatches := mathutil.CeilInts(fileSize, singlePartChunkSize)
@@ -60,7 +60,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 					switch {
 					case nil == err:
 						err = closeErr
-					case errutil.IsContext(ctx):
+					case errutil.IsContext(wgCtx):
 						err = flaw.From(errors.New("context was ended")).Join(closeErr)
 					case errors.Is(err, context.DeadlineExceeded):
 						err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
@@ -74,10 +74,10 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 				}
 			}()
 
-			if err := d.downloadRange(ctx, start, end, f); nil != err {
+			if err := d.downloadRange(wgCtx, start, end, f); nil != err {
 				switch {
-				case errutil.IsContext(ctx):
-					return ctx.Err()
+				case errutil.IsContext(wgCtx):
+					return wgCtx.Err()
 				case errors.Is(err, context.DeadlineExceeded):
 					return context.DeadlineExceeded
 				case errors.Is(err, ErrTooManyRequests):
