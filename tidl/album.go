@@ -209,6 +209,8 @@ func (d *Downloader) fetchAlbumInfo(ctx context.Context, id string) (a *Album, e
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
@@ -292,7 +294,7 @@ func (t *AlbumTrack) id() string {
 }
 
 func (t *AlbumTrack) FileName() string {
-	return filepath.Join(albumTrackDir(t.Album.ID, t.VolumeNumber), t.ID+".flac")
+	return filepath.Join(albumTrackDir(t.Album.ID, t.VolumeNumber), t.ID)
 }
 
 func (t *AlbumTrack) cover() string {
@@ -311,6 +313,10 @@ func (t *AlbumTrack) info() TrackInfo {
 		Title:      title,
 		ArtistName: t.Artist.Name,
 		Version:    t.Version,
+		Format: TrackFormat{
+			Ext:      "",
+			MimeType: "",
+		},
 	}
 }
 

@@ -463,7 +463,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 		document = message.UploadedDocument(upload)
 	}
 	document.
-		MIME("audio/flac").
+		MIME(info.Format.MimeType).
 		Attributes(
 			&tg.DocumentAttributeFilename{
 				FileName: uploadTrackFileName(info),
@@ -482,7 +482,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 
 func uploadTrackFileName(info tidl.TrackInfo) string {
 	if nil != info.Version {
-		return fmt.Sprintf("%s - %s (%s).flac", info.ArtistName, info.Title, *info.Version)
+		return fmt.Sprintf("%s - %s (%s).%s", info.ArtistName, info.Title, *info.Version, info.Format.Ext)
 	}
-	return fmt.Sprintf("%s - %s.flac", info.ArtistName, info.Title)
+	return fmt.Sprintf("%s - %s.%s", info.ArtistName, info.Title, info.Format.Ext)
 }

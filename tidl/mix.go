@@ -147,7 +147,7 @@ func (t *MixTrack) id() string {
 }
 
 func (t *MixTrack) FileName() string {
-	return filepath.Join(mixTrackDir(t.MixID), t.ID+".flac")
+	return filepath.Join(mixTrackDir(t.MixID), t.ID)
 }
 
 func (t *MixTrack) cover() string {
@@ -166,6 +166,10 @@ func (t *MixTrack) info() TrackInfo {
 		Title:      title,
 		ArtistName: t.ArtistName,
 		Version:    t.Version,
+		Format: TrackFormat{
+			Ext:      "",
+			MimeType: "",
+		},
 	}
 }
 
@@ -236,6 +240,8 @@ func (d *Downloader) mixInfo(ctx context.Context, id string) (m *Mix, err error)
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):

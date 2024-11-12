@@ -59,7 +59,7 @@ func (t *SingleTrack) id() string {
 }
 
 func (t *SingleTrack) FileName() string {
-	return filepath.Join("singles", t.ID+".flac")
+	return filepath.Join("singles", t.ID)
 }
 
 func (d *Downloader) prepareTrackDir(t Track, a Album) error {
@@ -149,6 +149,10 @@ func (t *SingleTrack) info() TrackInfo {
 		Title:      title,
 		ArtistName: t.Artist.Name,
 		Version:    t.Version,
+		Format: TrackFormat{
+			Ext:      "",
+			MimeType: "",
+		},
 	}
 }
 
@@ -217,6 +221,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):

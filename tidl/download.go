@@ -61,10 +61,6 @@ func NewDownloader(auth *auth.Auth, basePath string, cache *cache.Cache[*Album],
 }
 
 func (d *Downloader) download(ctx context.Context, t Track) error {
-	if err := d.writeInfo(t); nil != err {
-		return err
-	}
-
 	coverBytes, err := d.loadCover(ctx, t)
 	if nil != err {
 		return err
@@ -74,8 +70,14 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 		return err
 	}
 
-	stream, err := d.stream(ctx, t.id())
+	stream, format, err := d.stream(ctx, t.id())
 	if nil != err {
+		return err
+	}
+
+	info := t.info()
+	info.Format = *format
+	if err := d.writeInfo(t.FileName(), info); nil != err {
 		return err
 	}
 
@@ -106,8 +108,8 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 	return nil
 }
 
-func (d *Downloader) writeInfo(t Track) (err error) {
-	infoFilePath := filepath.Join(d.basePath, t.FileName()+".json")
+func (d *Downloader) writeInfo(fileName string, info TrackInfo) (err error) {
+	infoFilePath := filepath.Join(d.basePath, fileName+".json")
 	flawP := flaw.P{"info_file_path": infoFilePath}
 	f, err := os.OpenFile(
 		infoFilePath,
@@ -130,9 +132,9 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 		}
 	}()
 
-	if err := json.NewEncoder(f).Encode(t.info()); nil != err {
+	if err := json.NewEncoder(f).Encode(info); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		flawP["track_info"] = ptr.Of(t.info()).FlawP()
+		flawP["track_info"] = ptr.Of(info).FlawP()
 		return flaw.From(fmt.Errorf("failed to write track info: %v", err)).Append(flawP)
 	}
 
@@ -213,6 +215,8 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err 
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
@@ -349,6 +353,8 @@ func (d *Downloader) getPagedItems(ctx context.Context, itemsURL string, page in
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):

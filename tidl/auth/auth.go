@@ -233,6 +233,8 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
@@ -355,6 +357,8 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
@@ -532,6 +536,8 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
@@ -669,6 +675,8 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
