@@ -6,7 +6,7 @@ var (
 		MimeType: "audio/flac",
 	}
 	TrackFormatMP4 TrackFormat = TrackFormat{
-		Ext:      "flac",
-		MimeType: "audio/flac",
+		Ext:      "m4a",
+		MimeType: "audio/m4a",
 	}
 )
