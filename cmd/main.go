@@ -102,9 +102,6 @@ func run(cliCtx *cli.Context) (err error) {
 	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	msgCtx, cancel := ctxutil.WithDelayedTimeout(ctx, 5*time.Second)
-	defer cancel()
-
 	logger := log.NewPretty(os.Stdout).Level(zerolog.TraceLevel)
 	var (
 		appHash  = os.Getenv("APP_HASH")
@@ -182,7 +179,14 @@ func run(cliCtx *cli.Context) (err error) {
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
-	return client.Run(ctx, func(ctx context.Context) error {
+	clientCtx, cancel := ctxutil.WithDelayedTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Intentionally ignore client-inherited context, which is inherited from clientCtx
+	// for the run function to force it to use the parent context, which is inherited
+	// from cli context. This allows all Telegram messaging operations context to still
+	// be active a bit more after parent context cancellation.
+	return client.Run(clientCtx, func(_ context.Context) error {
 		status, err := client.Auth().Status(ctx)
 		if nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
@@ -207,9 +211,9 @@ func run(cliCtx *cli.Context) (err error) {
 
 		chat := w.sender.Resolve(cfg.TargetPeerID)
 
-		if _, err = chat.StyledText(msgCtx, styling.Italic("Bot has started!")); nil != err {
+		if _, err = chat.StyledText(clientCtx, styling.Italic("Bot has started!")); nil != err {
 			switch {
-			case errutil.IsContext(msgCtx):
+			case errutil.IsContext(clientCtx):
 				logger.Error().Msg("Failed to send bot startup message to specified target chat due to context cancellation")
 			default:
 				return fmt.Errorf("failed to send bot startup message to specified target chat: %v", err)
@@ -247,7 +251,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 
 			_, err = chat.StyledText(
-				msgCtx,
+				clientCtx,
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
 				styling.URL(authorization.URL),
@@ -259,7 +263,7 @@ func run(cliCtx *cli.Context) (err error) {
 				styling.Italic("Waiting for authentication..."),
 			)
 			if nil != err {
-				if errors.Is(msgCtx.Err(), context.Canceled) {
+				if errors.Is(clientCtx.Err(), context.Canceled) {
 					return context.Canceled
 				}
 				return fmt.Errorf("failed to send TIDAL authentication link to specified peer: %v", err)
@@ -272,8 +276,8 @@ func run(cliCtx *cli.Context) (err error) {
 				case errors.Is(ctx.Err(), context.Canceled):
 					return context.Canceled
 				case errors.Is(err, auth.ErrAuthWaitTimeout):
-					if _, err = chat.StyledText(msgCtx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
-						if errors.Is(msgCtx.Err(), context.Canceled) {
+					if _, err = chat.StyledText(clientCtx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
+						if errors.Is(clientCtx.Err(), context.Canceled) {
 							return context.Canceled
 						}
 						return fmt.Errorf("failed to send TIDAL authentication URL expired message to specified target chat: %v", err)
@@ -288,8 +292,8 @@ func run(cliCtx *cli.Context) (err error) {
 						styling.Plain("\n"),
 						styling.Plain("Restart the bot to initiate the authorization flow again."),
 					}
-					if _, err := chat.StyledText(msgCtx, lines...); nil != err {
-						if errors.Is(msgCtx.Err(), context.Canceled) {
+					if _, err := chat.StyledText(clientCtx, lines...); nil != err {
+						if errors.Is(clientCtx.Err(), context.Canceled) {
 							return context.Canceled
 						}
 						return fmt.Errorf("failed to send TIDAL authentication failure error message to specified target chat: %v", err)
@@ -306,8 +310,8 @@ func run(cliCtx *cli.Context) (err error) {
 				styling.Plain("\n"),
 				styling.Plain("Waiting for your command..."),
 			}
-			if _, err := chat.StyledText(msgCtx, lines...); nil != err {
-				if errors.Is(msgCtx.Err(), context.Canceled) {
+			if _, err := chat.StyledText(clientCtx, lines...); nil != err {
+				if errors.Is(clientCtx.Err(), context.Canceled) {
 					return context.Canceled
 				}
 				return fmt.Errorf("failed to send TIDAL authentication successful message to specified target chat: %v", err)
@@ -332,17 +336,17 @@ func run(cliCtx *cli.Context) (err error) {
 
 		logger.Debug().Msg("TIDAL access token verified")
 		w.tidlAuth = tidlAuth
-		d.OnNewMessage(buildOnMessage(w, msgCtx, *cfg))
+		d.OnNewMessage(buildOnMessage(w, clientCtx, *cfg))
 
 		logger.Info().Msg("Bot is running")
 		<-ctx.Done()
 
 		logger.Debug().Msg("Stopping bot due to received signal")
-		if _, err = chat.StyledText(msgCtx, styling.Italic("Bot is shutting down...")); nil != err {
+		if _, err = chat.StyledText(clientCtx, styling.Italic("Bot is shutting down...")); nil != err {
 			switch {
-			case errors.Is(msgCtx.Err(), context.Canceled):
+			case errors.Is(clientCtx.Err(), context.Canceled):
 				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context cancellation")
-			case errors.Is(msgCtx.Err(), context.DeadlineExceeded):
+			case errors.Is(clientCtx.Err(), context.DeadlineExceeded):
 				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context deadline exceeded")
 			default:
 				return fmt.Errorf("failed to send bot shutdown message to specified target chat: %v", err)
@@ -614,7 +618,7 @@ func buildOnMessage(w *Worker, msgCtx context.Context, cfg config.Config) func(c
 							),
 						},
 					).
-					ForceFile(false)
+					ForceFile(true)
 				if _, err := reply.Media(msgCtx, document); nil != err {
 					if errors.Is(msgCtx.Err(), context.Canceled) {
 						return nil
