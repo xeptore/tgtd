@@ -18,6 +18,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/log"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/result"
@@ -278,7 +279,7 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 
 	expiresAt, err := extractExpiresAt(respBody.AccessToken)
 	if nil != err {
-		flawP["access_token"] = respBody.AccessToken
+		flawP["access_token"] = log.RedactString(respBody.AccessToken)
 		return nil, must.BeFlaw(err).Append(flawP)
 	}
 
