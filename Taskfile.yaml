@@ -60,4 +60,4 @@ tasks:
     cmds:
       - task: lint
         vars:
-          OUT_FORMAT: github-actions
+          OUT_FORMAT: colored-line-number
