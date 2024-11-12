@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -26,7 +26,7 @@ import (
 )
 
 func albumTrackDir(albumID string, volumeNumber int) string {
-	return path.Join("albums", albumID, strconv.Itoa(volumeNumber))
+	return filepath.Join("albums", albumID, strconv.Itoa(volumeNumber))
 }
 
 func (d *Downloader) Album(ctx context.Context, id string) error {
@@ -85,7 +85,7 @@ func (v Volume) FlawP() flaw.P {
 }
 
 func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
-	volDir := path.Join(d.basePath, albumTrackDir(vol.Album.ID, vol.Number))
+	volDir := filepath.Join(d.basePath, albumTrackDir(vol.Album.ID, vol.Number))
 	flawP := flaw.P{"volume_dir": volDir}
 	if err := os.RemoveAll(volDir); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -96,7 +96,7 @@ func (d *Downloader) prepareAlbumVolumeDir(vol Volume) (err error) {
 		return flaw.From(fmt.Errorf("failed to create album volume directory: %v", err)).Append(flawP)
 	}
 
-	volumeInfoFilePath := path.Join(volDir, "volume.json")
+	volumeInfoFilePath := filepath.Join(volDir, "volume.json")
 	flawP["volume_info_file"] = volumeInfoFilePath
 	f, err := os.OpenFile(volumeInfoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
@@ -292,13 +292,7 @@ func (t *AlbumTrack) id() string {
 }
 
 func (t *AlbumTrack) FileName() string {
-	var fileName string
-	if nil != t.Version {
-		fileName = fmt.Sprintf("%d. %s - %s (%s).flac", t.Number, t.Artist.Name, t.Title, *t.Version)
-	} else {
-		fileName = fmt.Sprintf("%d. %s - %s.flac", t.Number, t.Artist.Name, t.Title)
-	}
-	return path.Join(albumTrackDir(t.Album.ID, t.VolumeNumber), fileName)
+	return filepath.Join(albumTrackDir(t.Album.ID, t.VolumeNumber), t.ID+".flac")
 }
 
 func (t *AlbumTrack) cover() string {

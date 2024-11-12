@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -60,17 +59,11 @@ func (t *SingleTrack) id() string {
 }
 
 func (t *SingleTrack) FileName() string {
-	var fileName string
-	if nil != t.Version {
-		fileName = fmt.Sprintf("%s - %s (%s).flac", t.Artist.Name, t.Title, *t.Version)
-	} else {
-		fileName = fmt.Sprintf("%s - %s.flac", t.Artist.Name, t.Title)
-	}
-	return path.Join("singles", t.ID, fileName)
+	return filepath.Join("singles", t.ID+".flac")
 }
 
 func (d *Downloader) prepareTrackDir(t Track, a Album) error {
-	trackDir := filepath.Dir(path.Join(d.basePath, t.FileName()))
+	trackDir := filepath.Dir(filepath.Join(d.basePath, t.FileName()))
 	flawP := flaw.P{"track_dir": trackDir}
 	if err := os.RemoveAll(trackDir); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -81,7 +74,7 @@ func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 		return flaw.From(fmt.Errorf("failed to create track directory: %v", err)).Append(flawP)
 	}
 
-	infoFilePath := path.Join(trackDir, "album.json")
+	infoFilePath := filepath.Join(trackDir, "album.json")
 	flawP["info_file_path"] = infoFilePath
 	f, err := os.OpenFile(infoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
@@ -102,7 +95,7 @@ func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 }
 
 func ReadTrackAlbumInfoFile(trackDir string) (inf *Album, err error) {
-	infoFilePath := path.Join(trackDir, "album.json")
+	infoFilePath := filepath.Join(trackDir, "album.json")
 	f, err := os.OpenFile(infoFilePath, os.O_RDONLY, 0o644)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}

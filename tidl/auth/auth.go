@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -43,7 +43,7 @@ type Auth struct {
 }
 
 func Load(ctx context.Context, credsDir string) (*Auth, error) {
-	creds, err := load(ctx, path.Join(credsDir, tokenFileName))
+	creds, err := load(ctx, filepath.Join(credsDir, tokenFileName))
 	if nil != err {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func NewAuthorizer(ctx context.Context, credsDir string) (link *AuthorizationRes
 				}
 				f := File(*creds)
 				flawP := flaw.P{"creds": f.flawP()}
-				if err := save(f, path.Join(credsDir, tokenFileName)); nil != err {
+				if err := save(f, filepath.Join(credsDir, tokenFileName)); nil != err {
 					flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 					done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
 					return

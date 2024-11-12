@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -25,7 +25,7 @@ import (
 )
 
 func playlistTrackDir(playlistID string) string {
-	return path.Join("playlists", playlistID)
+	return filepath.Join("playlists", playlistID)
 }
 
 func (d *Downloader) Playlist(ctx context.Context, id string) error {
@@ -65,7 +65,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 }
 
 func (d *Downloader) preparePlaylistDir(p Playlist) error {
-	playlistDir := path.Join(d.basePath, playlistTrackDir(p.ID))
+	playlistDir := filepath.Join(d.basePath, playlistTrackDir(p.ID))
 	flawP := flaw.P{"playlist_dir": playlistDir}
 	if err := os.RemoveAll(playlistDir); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -76,7 +76,7 @@ func (d *Downloader) preparePlaylistDir(p Playlist) error {
 		return flaw.From(fmt.Errorf("failed to create playlist directory: %v", err)).Append(flawP)
 	}
 
-	infoFilePath := path.Join(playlistDir, "info.json")
+	infoFilePath := filepath.Join(playlistDir, "info.json")
 	flawP["info_file_path"] = infoFilePath
 	f, err := os.OpenFile(infoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
@@ -140,13 +140,7 @@ func (t *PlaylistTrack) id() string {
 }
 
 func (t *PlaylistTrack) FileName() string {
-	var fileName string
-	if nil != t.Version {
-		fileName = fmt.Sprintf("%s - %s (%s).flac", t.ArtistName, t.Title, *t.Version)
-	} else {
-		fileName = fmt.Sprintf("%s - %s.flac", t.ArtistName, t.Title)
-	}
-	return path.Join(playlistTrackDir(t.PlayListID), fileName)
+	return filepath.Join(playlistTrackDir(t.PlayListID), t.ID+".flac")
 }
 
 func (t *PlaylistTrack) cover() string {

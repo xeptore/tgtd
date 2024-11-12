@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 
 	"github.com/goccy/go-json"
@@ -25,7 +25,7 @@ import (
 )
 
 func mixTrackDir(mixID string) string {
-	return path.Join("mixes", mixID)
+	return filepath.Join("mixes", mixID)
 }
 
 func (d *Downloader) Mix(ctx context.Context, id string) error {
@@ -63,7 +63,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 }
 
 func (d *Downloader) prepareMixDir(m Mix) error {
-	mixDir := path.Join(d.basePath, mixTrackDir(m.ID))
+	mixDir := filepath.Join(d.basePath, mixTrackDir(m.ID))
 	if err := os.RemoveAll(mixDir); nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return flaw.From(fmt.Errorf("failed to delete possibly existing mix directory: %v", err)).Append(flawP)
@@ -74,7 +74,7 @@ func (d *Downloader) prepareMixDir(m Mix) error {
 		return flaw.From(fmt.Errorf("failed to create mix directory: %v", err)).Append(flawP)
 	}
 
-	f, err := os.OpenFile(path.Join(mixDir, "info.json"), os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
+	f, err := os.OpenFile(filepath.Join(mixDir, "info.json"), os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
@@ -132,13 +132,7 @@ func (t *MixTrack) id() string {
 }
 
 func (t *MixTrack) FileName() string {
-	var fileName string
-	if nil != t.Version {
-		fileName = fmt.Sprintf("%s - %s (%s).flac", t.ArtistName, t.Title, *t.Version)
-	} else {
-		fileName = fmt.Sprintf("%s - %s.flac", t.ArtistName, t.Title)
-	}
-	return path.Join(mixTrackDir(t.MixID), fileName)
+	return filepath.Join(mixTrackDir(t.MixID), t.ID+".flac")
 }
 
 func (t *MixTrack) cover() string {

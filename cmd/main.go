@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -159,7 +158,7 @@ func run(cliCtx *cli.Context) (err error) {
 		appHash,
 		//nolint:exhaustruct
 		telegram.Options{
-			SessionStorage: &session.FileStorage{Path: path.Join(cfg.CredsDir, "session.json")},
+			SessionStorage: &session.FileStorage{Path: filepath.Join(cfg.CredsDir, "session.json")},
 			UpdateHandler:  updateHandler,
 			MaxRetries:     -1,
 			AckBatchSize:   100,

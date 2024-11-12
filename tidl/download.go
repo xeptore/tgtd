@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -79,7 +79,7 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 		return err
 	}
 
-	fileName := path.Join(d.basePath, t.FileName())
+	fileName := filepath.Join(d.basePath, t.FileName())
 	flawP := flaw.P{"file_name": fileName}
 
 	waitTime := ratelimit.TrackDownloadSleepMS()
@@ -108,7 +108,7 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 
 func (d *Downloader) writeInfo(t Track) (err error) {
 	f, err := os.OpenFile(
-		path.Join(d.basePath, t.FileName()+".json"),
+		filepath.Join(d.basePath, t.FileName()+".json"),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
 		0o0644,
 	)
@@ -157,7 +157,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err 
 	coverURL, err := url.JoinPath(fmt.Sprintf(coverURLFormat, strings.ReplaceAll(t.cover(), "-", "/")))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return nil, flaw.From(fmt.Errorf("failed to join cover base URL with cover path: %v", err)).Append(flawP)
+		return nil, flaw.From(fmt.Errorf("failed to join cover base URL with cover filepath: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"cover_url": coverURL}
 
@@ -247,7 +247,7 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err 
 
 func (d *Downloader) writeCover(t Track, b []byte) (err error) {
 	f, err := os.OpenFile(
-		path.Join(d.basePath, t.FileName()+".jpg"),
+		filepath.Join(d.basePath, t.FileName()+".jpg"),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
 		0o0644,
 	)

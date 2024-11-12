@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -31,7 +30,7 @@ import (
 )
 
 func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
-	albumDir := path.Join(path.Join(baseDir, "albums", w.currentJob.ID))
+	albumDir := filepath.Join(filepath.Join(baseDir, "albums", w.currentJob.ID))
 	flawP := flaw.P{"album_dir": albumDir}
 	files, err := os.ReadDir(albumDir)
 	if nil != err {
@@ -49,7 +48,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 		}
 
 		volNum := volIdx + 1
-		volDirPath := path.Join(albumDir, strconv.Itoa(volNum))
+		volDirPath := filepath.Join(albumDir, strconv.Itoa(volNum))
 		loopFlawP := flaw.P{"volume_dir": volDirPath}
 		loopFlawPs[volIdx] = loopFlawP
 
@@ -89,7 +88,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 }
 
 func (w *Worker) readVolumeInfo(dirPath string) (vol *tidl.Volume, err error) {
-	volumeInfoFilePath := path.Join(dirPath, "volume.json")
+	volumeInfoFilePath := filepath.Join(dirPath, "volume.json")
 	flawP := flaw.P{"volume_info_file_path": volumeInfoFilePath}
 	f, err := os.OpenFile(volumeInfoFilePath, os.O_RDONLY, 0o644)
 	if nil != err {
@@ -148,7 +147,7 @@ func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, vol tid
 }
 
 func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
-	playlistDir := path.Join(path.Join(baseDir, "playlists", w.currentJob.ID))
+	playlistDir := filepath.Join(filepath.Join(baseDir, "playlists", w.currentJob.ID))
 	flawP := flaw.P{"playlist_dir": playlistDir}
 
 	playlist, err := readDirInfo[tidl.Playlist](playlistDir)
@@ -185,7 +184,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 }
 
 func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
-	mixDir := path.Join(path.Join(baseDir, "mixes", w.currentJob.ID))
+	mixDir := filepath.Join(filepath.Join(baseDir, "mixes", w.currentJob.ID))
 	flawP := flaw.P{"mix_dir": mixDir}
 
 	mix, err := readDirInfo[tidl.Mix](mixDir)
@@ -249,7 +248,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 	flawP["loop_payloads"] = loopFlawPs
 	for i, trackFileName := range fileNames {
 		wg.Go(func() error {
-			fileName := path.Join(baseDir, trackFileName)
+			fileName := filepath.Join(baseDir, trackFileName)
 			loopFlawP := flaw.P{"file_name": fileName}
 			loopFlawPs[i] = loopFlawP
 
@@ -303,7 +302,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 }
 
 func readDirInfo[T any](dirPath string) (inf *T, err error) {
-	f, err := os.OpenFile(path.Join(dirPath, "info.json"), os.O_RDONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(dirPath, "info.json"), os.O_RDONLY, 0o644)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to open dir info file: %v", err)).Append(flawP)
@@ -329,7 +328,7 @@ func readDirInfo[T any](dirPath string) (inf *T, err error) {
 }
 
 func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
-	trackDir := path.Join(path.Join(basePath, "singles", w.currentJob.ID))
+	trackDir := filepath.Join(filepath.Join(basePath, "singles", w.currentJob.ID))
 	flawP := flaw.P{"track_dir": trackDir}
 	entries, err := os.ReadDir(trackDir)
 	if nil != err {
@@ -361,7 +360,7 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) error {
 			continue
 		}
 
-		fileName := path.Join(trackDir, strings.TrimSuffix(entry.Name(), ".json"))
+		fileName := filepath.Join(trackDir, strings.TrimSuffix(entry.Name(), ".json"))
 		flawP["track_file_name"] = fileName
 
 		track, err := tidl.ReadTrackInfoFile(fileName)
@@ -423,13 +422,13 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 	flawP := flaw.P{"cover_file_name": coverFileName}
 
 	cachedCover, err := u.cache.Fetch(coverFileName, cache.DefaultUploadedCoverTTL, func() (tg.InputFileClass, error) {
-		coverBytes, err := os.ReadFile(fileName + ".jpg")
+		coverBytes, err := os.ReadFile(coverFileName)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err)).Append(flawP)
 		}
 
-		uploadedCover, err := uploader.FromBytes(ctx, "cover.jpg", coverBytes)
+		uploadedCover, err := uploader.FromBytes(ctx, filepath.Base(coverFileName), coverBytes)
 		if nil != err {
 			if errutil.IsContext(ctx) {
 				return nil, ctx.Err()
@@ -465,7 +464,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 		MIME("audio/flac").
 		Attributes(
 			&tg.DocumentAttributeFilename{
-				FileName: filepath.Base(fileName),
+				FileName: uploadTrackFileName(info),
 			},
 			//nolint:exhaustruct
 			&tg.DocumentAttributeAudio{
@@ -477,4 +476,11 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 		Thumb(cover).
 		Audio()
 	return document, nil
+}
+
+func uploadTrackFileName(info tidl.TrackInfo) string {
+	if nil != info.Version {
+		return fmt.Sprintf("%s - %s (%s).flac", info.ArtistName, info.Title, *info.Version)
+	}
+	return fmt.Sprintf("%s - %s.flac", info.ArtistName, info.Title)
 }
