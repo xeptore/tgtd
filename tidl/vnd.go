@@ -300,7 +300,7 @@ func (d *VndTrackStream) downloadRange(ctx context.Context, start, end int, f *o
 	}()
 
 	switch status := resp.StatusCode; status {
-	case http.StatusOK:
+	case http.StatusPartialContent:
 	case http.StatusUnauthorized:
 		respBody, err := httputil.ReadOptionalResponseBody(ctx, resp)
 		if nil != err {
