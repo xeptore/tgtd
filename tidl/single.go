@@ -81,6 +81,18 @@ func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track album info file: %v", err)).Append(flawP)
 	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close track album info file: %v", closeErr)).Append(flawP)
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+
 	if err := json.NewEncoder(f).Encode(a); nil != err {
 		flawP["album"] = a.FlawP()
 		flawP["track"] = ptr.Of(t.info()).FlawP()

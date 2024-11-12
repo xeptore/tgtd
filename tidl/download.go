@@ -107,18 +107,20 @@ func (d *Downloader) download(ctx context.Context, t Track) error {
 }
 
 func (d *Downloader) writeInfo(t Track) (err error) {
+	infoFilePath := filepath.Join(d.basePath, t.FileName()+".json")
+	flawP := flaw.P{"info_file_path": infoFilePath}
 	f, err := os.OpenFile(
-		filepath.Join(d.basePath, t.FileName()+".json"),
+		infoFilePath,
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
 		0o0644,
 	)
 	if nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track info file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close track info file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
@@ -129,12 +131,13 @@ func (d *Downloader) writeInfo(t Track) (err error) {
 	}()
 
 	if err := json.NewEncoder(f).Encode(t.info()); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "track_info": ptr.Of(t.info()).FlawP()}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		flawP["track_info"] = ptr.Of(t.info()).FlawP()
 		return flaw.From(fmt.Errorf("failed to write track info: %v", err)).Append(flawP)
 	}
 
 	if err := f.Sync(); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to sync track info file: %v", err)).Append(flawP)
 	}
 
@@ -246,18 +249,20 @@ func (d *Downloader) downloadCover(ctx context.Context, t Track) (b []byte, err 
 }
 
 func (d *Downloader) writeCover(t Track, b []byte) (err error) {
+	coverFilePath := filepath.Join(d.basePath, t.FileName()+".jpg")
+	flawP := flaw.P{"cover_file_path": coverFilePath}
 	f, err := os.OpenFile(
-		filepath.Join(d.basePath, t.FileName()+".jpg"),
+		coverFilePath,
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
 		0o0644,
 	)
 	if nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track cover file: %v", err)).Append(flawP)
 	}
 	defer func() {
 		if closeErr := f.Close(); nil != closeErr {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close track cover file: %v", closeErr)).Append(flawP)
 			if nil != err {
 				err = must.BeFlaw(err).Join(closeErr)
@@ -268,15 +273,13 @@ func (d *Downloader) writeCover(t Track, b []byte) (err error) {
 	}()
 
 	if _, err := io.Copy(f, bytes.NewReader(b)); nil != err {
-		flawP := flaw.P{
-			"err_debug_tree": errutil.Tree(err).FlawP(),
-			"bytes":          string(b),
-		}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		flawP["bytes"] = string(b)
 		return flaw.From(fmt.Errorf("failed to write track cover: %v", err)).Append(flawP)
 	}
 
 	if err := f.Sync(); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to sync track cover file: %v", err)).Append(flawP)
 	}
 

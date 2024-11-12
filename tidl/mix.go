@@ -64,29 +64,44 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 
 func (d *Downloader) prepareMixDir(m Mix) error {
 	mixDir := filepath.Join(d.basePath, mixTrackDir(m.ID))
+	flawP := flaw.P{"mix_dir": mixDir}
 	if err := os.RemoveAll(mixDir); nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return flaw.From(fmt.Errorf("failed to delete possibly existing mix directory: %v", err)).Append(flawP)
 	}
-	flawP := flaw.P{"mix_dir": mixDir}
+
 	if err := os.MkdirAll(mixDir, 0o0755); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create mix directory: %v", err)).Append(flawP)
 	}
 
-	f, err := os.OpenFile(filepath.Join(mixDir, "info.json"), os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
+	infoFilePath := filepath.Join(mixDir, "info.json")
+	flawP["info_file_path"] = infoFilePath
+	f, err := os.OpenFile(infoFilePath, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create mix info file: %v", err)).Append(flawP)
 	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close mix info file: %v", closeErr)).Append(flawP)
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+
 	if err := json.NewEncoder(f).Encode(m); nil != err {
 		flawP["mix"] = m.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to encode mix info: %v", err)).Append(flawP)
 	}
-	if err := f.Close(); nil != err {
+	if err := f.Sync(); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return flaw.From(fmt.Errorf("failed to close mix info file: %v", err)).Append(flawP)
+		return flaw.From(fmt.Errorf("failed to sync mix info file: %v", err)).Append(flawP)
 	}
 	return nil
 }

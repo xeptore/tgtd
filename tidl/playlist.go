@@ -83,6 +83,18 @@ func (d *Downloader) preparePlaylistDir(p Playlist) error {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create playlist info file: %v", err)).Append(flawP)
 	}
+	defer func() {
+		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close playlist info file: %v", closeErr)).Append(flawP)
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+
 	if err := json.NewEncoder(f).Encode(p); nil != err {
 		flawP["playlist"] = p.FlawP()
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
