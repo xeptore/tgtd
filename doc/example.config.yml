@@ -1,3 +1,4 @@
 download_base_dir: /home/nonroot/downloads
+credentials_dir: /home/nonroot/.creds
 target_peer_id: ""
 from_ids: []
