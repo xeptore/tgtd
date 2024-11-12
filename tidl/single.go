@@ -59,12 +59,13 @@ func (t *SingleTrack) id() string {
 }
 
 func (t *SingleTrack) FileName() string {
-	return filepath.Join("singles", t.ID)
+	return filepath.Join("singles", t.ID, "audio")
 }
 
 func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 	trackDir := filepath.Dir(filepath.Join(d.basePath, t.FileName()))
 	flawP := flaw.P{"track_dir": trackDir}
+
 	if err := os.RemoveAll(trackDir); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to delete possibly existing track directory: %v", err)).Append(flawP)
