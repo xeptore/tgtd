@@ -152,7 +152,7 @@ func (t *PlaylistTrack) id() string {
 }
 
 func (t *PlaylistTrack) FileName() string {
-	return filepath.Join(playlistTrackDir(t.PlayListID), t.ID+".flac")
+	return filepath.Join(playlistTrackDir(t.PlayListID), t.ID)
 }
 
 func (t *PlaylistTrack) cover() string {
@@ -171,6 +171,10 @@ func (t *PlaylistTrack) info() TrackInfo {
 		Title:      title,
 		ArtistName: t.ArtistName,
 		Version:    t.Version,
+		Format: TrackFormat{
+			Ext:      "",
+			MimeType: "",
+		},
 	}
 }
 
@@ -311,6 +315,8 @@ func (d *Downloader) playlistInfo(ctx context.Context, id string) (p *Playlist, 
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):

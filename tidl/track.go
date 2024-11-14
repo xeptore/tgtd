@@ -23,11 +23,21 @@ type Track interface {
 	info() TrackInfo
 }
 
+type TrackFormat struct {
+	Ext      string `json:"ext"`
+	MimeType string `json:"mimeType"`
+}
+
+func (f TrackFormat) flawP() flaw.P {
+	return flaw.P{"ext": f.Ext, "mime_type": f.MimeType}
+}
+
 type TrackInfo struct {
-	Duration   int     `json:"duration"`
-	Title      string  `json:"title"`
-	ArtistName string  `json:"artistName"`
-	Version    *string `json:"version"`
+	Duration   int         `json:"duration"`
+	Title      string      `json:"title"`
+	ArtistName string      `json:"artistName"`
+	Version    *string     `json:"version"`
+	Format     TrackFormat `json:"format"`
 }
 
 func (t *TrackInfo) FlawP() flaw.P {
@@ -36,6 +46,7 @@ func (t *TrackInfo) FlawP() flaw.P {
 		"title":       t.Title,
 		"artist_name": t.ArtistName,
 		"version":     ptr.ValueOr(t.Version, ""),
+		"format":      t.Format.flawP(),
 	}
 }
 

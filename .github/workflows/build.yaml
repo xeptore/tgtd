@@ -28,7 +28,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: read
@@ -51,14 +51,15 @@ jobs:
           check-latest: true
       - name: Install Task
         run: |
-          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin/
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin/
+          export PATH="$PATH:~/.local/bin"
       - name: Run Code Linter
         run: task lint:ci
   build-docker-image:
     name: Build Docker Image
     needs:
       - lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       packages: write
       contents: read

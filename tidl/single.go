@@ -59,12 +59,13 @@ func (t *SingleTrack) id() string {
 }
 
 func (t *SingleTrack) FileName() string {
-	return filepath.Join("singles", t.ID+".flac")
+	return filepath.Join("singles", t.ID, "audio")
 }
 
 func (d *Downloader) prepareTrackDir(t Track, a Album) error {
 	trackDir := filepath.Dir(filepath.Join(d.basePath, t.FileName()))
 	flawP := flaw.P{"track_dir": trackDir}
+
 	if err := os.RemoveAll(trackDir); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to delete possibly existing track directory: %v", err)).Append(flawP)
@@ -149,6 +150,10 @@ func (t *SingleTrack) info() TrackInfo {
 		Title:      title,
 		ArtistName: t.Artist.Name,
 		Version:    t.Version,
+		Format: TrackFormat{
+			Ext:      "",
+			MimeType: "",
+		},
 	}
 }
 
@@ -217,6 +222,8 @@ func (d *Downloader) single(ctx context.Context, id string) (st *SingleTrack, er
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):

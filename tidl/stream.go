@@ -23,13 +23,13 @@ type TrackStream interface {
 	saveTo(ctx context.Context, fileName string) error
 }
 
-func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err error) {
+func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, format *TrackFormat, err error) {
 	trackURL := fmt.Sprintf(trackStreamAPIFormat, id)
 	flawP := flaw.P{"url": trackURL}
 	reqURL, err := url.Parse(trackURL)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to parse track URL to build track stream URLs: %v", err)).Append(flawP)
+		return nil, nil, flaw.From(fmt.Errorf("failed to parse track URL to build track stream URLs: %v", err)).Append(flawP)
 	}
 
 	params := make(url.Values, 4)
@@ -42,11 +42,11 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to create get track stream URLs request: %v", err)).Append(flawP)
+		return nil, nil, flaw.From(fmt.Errorf("failed to create get track stream URLs request: %v", err)).Append(flawP)
 	}
 	req.Header.Add("Authorization", "Bearer "+d.auth.Creds.AccessToken)
 
@@ -55,14 +55,14 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
+			return nil, nil, context.DeadlineExceeded
 		case errors.Is(err, ErrTooManyRequests):
-			return nil, ErrTooManyRequests
+			return nil, nil, ErrTooManyRequests
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to send get track stream URLs request: %v", err)).Append(flawP)
+			return nil, nil, flaw.From(fmt.Errorf("failed to send get track stream URLs request: %v", err)).Append(flawP)
 		}
 	}
 	defer func() {
@@ -90,13 +90,15 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return nil, nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
+			return nil, nil, context.DeadlineExceeded
 		default:
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track stream URLs response body: %v", err)).Append(flawP)
+			return nil, nil, flaw.From(fmt.Errorf("failed to read get track stream URLs response body: %v", err)).Append(flawP)
 		}
 	}
 
@@ -104,22 +106,22 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	case http.StatusOK:
 	case http.StatusUnauthorized:
 		flawP["response_body"] = string(respBytes)
-		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
+		return nil, nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
-		return nil, ErrTooManyRequests
+		return nil, nil, ErrTooManyRequests
 	case http.StatusForbidden:
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
-			return nil, must.BeFlaw(err).Append(flawP)
+			return nil, nil, must.BeFlaw(err).Append(flawP)
 		} else if ok {
-			return nil, ErrTooManyRequests
+			return nil, nil, ErrTooManyRequests
 		}
 
 		flawP["response_body"] = string(respBytes)
-		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
+		return nil, nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
 		flawP["response_body"] = string(respBytes)
-		return nil, flaw.From(fmt.Errorf("unexpected status code received from get track stream URLs: %d", code)).Append(flawP)
+		return nil, nil, flaw.From(fmt.Errorf("unexpected status code received from get track stream URLs: %d", code)).Append(flawP)
 	}
 
 	var responseBody struct {
@@ -129,7 +131,7 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
 		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
+		return nil, nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 	}
 	flawP["stream"] = flaw.P{"manifest_mime_type": responseBody.ManifestMimeType}
 
@@ -139,17 +141,28 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		info, err := mpd.ParseStreamInfo(dec)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to parse stream info: %v", err)).Append(flawP)
+			return nil, nil, flaw.From(fmt.Errorf("failed to parse stream info: %v", err)).Append(flawP)
 		}
 		flawP["stream_info"] = flaw.P{"info": info.FlawP()}
-		return &DashTrackStream{Info: *info, AuthAccessToken: d.auth.Creds.AccessToken}, nil
+
+		var format TrackFormat
+		switch info.Codec {
+		case "flac":
+			format = TrackFormatFlac
+		case "mp4":
+			format = TrackFormatMP4
+		default:
+			return nil, nil, flaw.From(fmt.Errorf("unexpected stream info codec: %s", info.Codec)).Append(flawP)
+		}
+
+		return &DashTrackStream{Info: *info, AuthAccessToken: d.auth.Creds.AccessToken}, &format, nil
 	case "application/vnd.tidal.bts", "vnd.tidal.bt":
 		var manifest VNDManifest
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(responseBody.Manifest))
 		if err := json.NewDecoder(dec).Decode(&manifest); nil != err {
 			flawP["manifest"] = manifest.FlawP()
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode vnd.tidal.bt manifest: %v", err)).Append(flawP)
+			return nil, nil, flaw.From(fmt.Errorf("failed to decode vnd.tidal.bt manifest: %v", err)).Append(flawP)
 		}
 		flawP["manifest"] = flaw.P{
 			"mime_type":       manifest.MimeType,
@@ -157,10 +170,15 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 			"encryption_type": manifest.EncryptionType,
 			"urls":            manifest.URLs,
 		}
+
+		var format TrackFormat
 		switch manifest.MimeType {
 		case "audio/flac":
+			format = TrackFormatFlac
+		case "audio/mp4":
+			format = TrackFormatMP4
 		default:
-			return nil, flaw.
+			return nil, nil, flaw.
 				From(fmt.Errorf("unexpected vnd.tidal.bt manifest mime type: %s", manifest.MimeType)).
 				Append(flawP)
 		}
@@ -168,19 +186,16 @@ func (d *Downloader) stream(ctx context.Context, id string) (s TrackStream, err 
 		switch manifest.EncryptionType {
 		case "NONE":
 		default:
-			return nil, flaw.
+			return nil, nil, flaw.
 				From(fmt.Errorf("encrypted vnd.tidal.bt manifest is not yet implemented: %s", manifest.EncryptionType)).
 				Append(flawP)
 		}
 
 		if len(manifest.URLs) == 0 {
-			return nil, flaw.From(errors.New("empty vnd.tidal.bt manifest URLs")).Append(flawP)
+			return nil, nil, flaw.From(errors.New("empty vnd.tidal.bt manifest URLs")).Append(flawP)
 		}
-		return &VndTrackStream{
-			URL:             manifest.URLs[0],
-			AuthAccessToken: d.auth.Creds.AccessToken,
-		}, nil
+		return &VndTrackStream{URL: manifest.URLs[0], AuthAccessToken: d.auth.Creds.AccessToken}, &format, nil
 	default:
-		return nil, flaw.From(fmt.Errorf("unexpected manifest mime type: %s", mimeType)).Append(flawP)
+		return nil, nil, flaw.From(fmt.Errorf("unexpected manifest mime type: %s", mimeType)).Append(flawP)
 	}
 }

@@ -94,7 +94,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 		loopFlawP := flaw.P{"part_file_name": partFileName}
 		loopFlawPs[i] = loopFlawP
 
-		if err := d.writePartToTrackFile(f, partFileName); nil != err {
+		if err := writePartToTrackFile(f, partFileName); nil != err {
 			return must.BeFlaw(err).Append(flawP)
 		}
 	}
@@ -107,7 +107,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 	return nil
 }
 
-func (d *DashTrackStream) writePartToTrackFile(f *os.File, partFileName string) (err error) {
+func writePartToTrackFile(f *os.File, partFileName string) (err error) {
 	fp, err := os.OpenFile(partFileName, os.O_RDONLY, 0o0644)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -203,17 +203,18 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 }
 
 func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *os.File) (err error) {
+	flawP := flaw.P{}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
 	}
 	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
-
-	flawP := flaw.P{}
 
 	client := http.Client{Timeout: config.DashSegmentDownloadTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
@@ -253,6 +254,8 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 	respBytes, err := io.ReadAll(resp.Body)
 	if nil != err {
 		switch {
+		case errors.Is(err, io.EOF):
+			return flaw.From(errors.New("unexpected empty response body")).Append(flawP)
 		case errutil.IsContext(ctx):
 			return ctx.Err()
 		case errors.Is(err, context.DeadlineExceeded):
