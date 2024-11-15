@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/httputil"
 	"github.com/xeptore/tgtd/log"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
@@ -230,24 +230,13 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read refresh token response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusBadRequest:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		var respBody struct {
 			Status           int    `json:"status"`
 			Error            string `json:"error"`
@@ -266,10 +255,18 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 400 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	var respBody struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -354,25 +351,14 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 	}()
 	flawP := flaw.P{"response": errutil.HTTPResponseFlawPayload(resp)}
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read verify access token response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 		return nil
 	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return err
+		}
 		var respBody struct {
 			Status      int    `json:"status"`
 			SubStatus   int    `json:"subStatus"`
@@ -390,6 +376,10 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 		flawP["response_body"] = string(respBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return err
+		}
 		flawP["response_body"] = string(respBytes)
 		return flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
@@ -533,26 +523,19 @@ func issueAuthorizationRequest(ctx context.Context) (out *authorizationResponse,
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read authorization response body: %v", err)).Append(flawP)
-		}
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", resp.StatusCode)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	var respBody struct {
 		DeviceCode      string `json:"deviceCode"`
 		UserCode        string `json:"userCode"`
@@ -672,24 +655,13 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read check authorization response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusBadRequest:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		var respBody struct {
 			Status           int    `json:"status"`
 			Error            string `json:"error"`
@@ -708,10 +680,18 @@ func (r *authorizationResponse) poll(ctx context.Context) (creds *Credentials, e
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 400 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	var respBody struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`

@@ -16,6 +16,7 @@ import (
 
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/httputil"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tidal/mpd"
@@ -253,29 +254,22 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, accessToken, link
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to read get segment response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch status := resp.StatusCode; status {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return err
+		}
 		flawP["response_body"] = string(respBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return must.BeFlaw(err).Append(flawP)
@@ -286,10 +280,18 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, accessToken, link
 		flawP["response_body"] = string(respBytes)
 		return flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return err
+		}
 		flawP["response_body"] = string(respBytes)
 		return flaw.From(fmt.Errorf("unexpected status code received from get track part: %d", status)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return err
+	}
 	if n, err := io.Copy(f, bytes.NewReader(respBytes)); nil != err {
 		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
