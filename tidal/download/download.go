@@ -1577,7 +1577,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 		}
 
 		t := AlbumTrackMeta{
-			ID:           id,
+			ID:           strconv.Itoa(v.Item.ID),
 			Artist:       v.Item.Artist.Name,
 			Title:        v.Item.Title,
 			Version:      v.Item.Version,
