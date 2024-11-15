@@ -6,6 +6,7 @@ import (
 
 	"github.com/gotd/td/tg"
 	"github.com/karlseguin/ccache/v3"
+
 	"github.com/xeptore/tgtd/tidal"
 )
 

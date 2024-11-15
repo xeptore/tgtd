@@ -30,19 +30,11 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 
 	info, err := albumFs.InfoFile.Read()
 	if nil != err {
-		// return must.BeFlaw(err).Append(flawP)
 		return err
 	}
 
-	// volumesCount := len(files)
-	// flawP["volumes_count"] = volumesCount
-	// loopFlawPs := make([]flaw.P, volumesCount)
-	// flawP["loop_payloads"] = loopFlawPs
 	for volIdx, tracks := range info.Volumes {
 		volNum := volIdx + 1
-		// volDirPath := filepath.Join(albumDir, strconv.Itoa(volNum))
-		// loopFlawP := flaw.P{"volume_dir": volDirPath}
-		// loopFlawPs[volIdx] = loopFlawP
 
 		batchSize := mathutil.OptimalAlbumSize(len(tracks))
 		numBatches := mathutil.CeilInts(len(tracks), batchSize)
@@ -51,10 +43,6 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 
 		batches := iterutil.WithIndex(slices.Chunk(tracks, batchSize))
 		for i, batch := range batches {
-			// fileNames := sliceutil.Map(batch, func(track tidalfs.StoredAlbumVolumeTrack) string { return track.FileName() })
-			// loopFlawP := flaw.P{"file_names": fileNames}
-			// loopFlawPs[i] = loopFlawP
-
 			caption := []styling.StyledTextOption{
 				styling.Plain(info.Caption),
 				styling.Plain("\n"),
@@ -87,7 +75,6 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 }
 
 func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) error {
-	flawP := flaw.P{}
 	playlistFs := dir.Playlist(w.currentJob.ID)
 
 	info, err := playlistFs.InfoFile.Read()
@@ -98,8 +85,6 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 	batchSize := mathutil.OptimalAlbumSize(len(info.Tracks))
 	batches := iterutil.WithIndex(slices.Chunk(info.Tracks, batchSize))
 	numBatches := mathutil.CeilInts(len(info.Tracks), batchSize)
-	loopFlawPs := make([]flaw.P, numBatches)
-	flawP["loop_payloads"] = loopFlawPs
 
 	for i, batch := range batches {
 		caption := []styling.StyledTextOption{
@@ -126,14 +111,13 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return must.BeFlaw(err).Append(flawP)
+			return must.BeFlaw(err)
 		}
 	}
 	return nil
 }
 
 func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
-	flawP := flaw.P{}
 	mixFs := dir.Mix(w.currentJob.ID)
 
 	info, err := mixFs.InfoFile.Read()
@@ -144,13 +128,8 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 	batchSize := mathutil.OptimalAlbumSize(len(info.Tracks))
 	batches := iterutil.WithIndex(slices.Chunk(info.Tracks, batchSize))
 	numBatches := mathutil.CeilInts(len(info.Tracks), batchSize)
-	loopFlawPs := make([]flaw.P, numBatches)
-	flawP["loop_payloads"] = loopFlawPs
 
 	for i, batch := range batches {
-		loopFlawP := flaw.P{"file_names": nil}
-		loopFlawPs[i] = loopFlawP
-
 		caption := []styling.StyledTextOption{
 			styling.Plain(info.Caption),
 			styling.Plain("\n"),
@@ -175,7 +154,7 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
-			return must.BeFlaw(err).Append(flawP)
+			return must.BeFlaw(err)
 		}
 	}
 	return nil
@@ -184,7 +163,7 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
 	album := make([]message.MultiMediaOption, len(batch))
 
-	flawP := flaw.P{}
+	flawP := make(flaw.P)
 
 	up, cancel := w.newUploader(ctx)
 	defer func() {
@@ -223,7 +202,6 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo,
 				return must.BeFlaw(err).Append(flawP)
 			}
 			album[i] = document
-			// w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Track uploaded")
 			return nil
 		})
 	}
@@ -253,15 +231,14 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo,
 }
 
 func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err error) {
-	flawP := flaw.P{}
 	trackFs := dir.Single(w.currentJob.ID)
 
 	info, err := trackFs.InfoFile.Read()
 	if nil != err {
-		// return must.BeFlaw(err).Append(flawP)
 		return err
 	}
-	// flawP["track_info"] = track.FlawP()
+
+	flawP := make(flaw.P)
 
 	up, cancel := w.newUploader(ctx)
 	defer func() {

@@ -59,6 +59,37 @@ type Album struct {
 	Cover    Cover
 }
 
+func (d Album) CreateDir() error {
+	flawP := flaw.P{"album_dir": d.Path}
+	if err := os.RemoveAll(d.Path); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to remove album directory: %v", err))
+	}
+	if err := os.MkdirAll(d.Path, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to create album directory: %v", err))
+	}
+	return nil
+}
+
+func (d Album) CreateVolDirs(numVols int) error {
+	for i := range numVols {
+		volNum := i + 1
+		volDir := filepath.Join(d.Path, strconv.Itoa(volNum))
+		flawP := flaw.P{"volume_dir": volDir}
+
+		if err := os.RemoveAll(volDir); nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to delete possibly existing album volume directory: %v", err)).Append(flawP)
+		}
+		if err := os.MkdirAll(volDir, 0o0755); nil != err {
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return flaw.From(fmt.Errorf("failed to create album volume directory: %v", err)).Append(flawP)
+		}
+	}
+	return nil
+}
+
 func (d Album) Track(vol int, id string) AlbumTrack {
 	path := filepath.Join(d.Path, strconv.Itoa(vol), id)
 	return AlbumTrack{
@@ -75,6 +106,19 @@ type AlbumTrack struct {
 type Playlist struct {
 	Path     string
 	InfoFile InfoFile[StoredPlaylist]
+}
+
+func (d Playlist) CreateDir() error {
+	flawP := flaw.P{"playlist_dir": d.Path}
+	if err := os.RemoveAll(d.Path); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to remove playlist directory: %v", err)).Append(flawP)
+	}
+	if err := os.MkdirAll(d.Path, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to create playlist directory: %v", err)).Append(flawP)
+	}
+	return nil
 }
 
 func (d Playlist) Track(id string) PlaylistTrack {
@@ -97,6 +141,19 @@ type Mix struct {
 	InfoFile InfoFile[StoredMix]
 }
 
+func (d Mix) CreateDir() error {
+	flawP := flaw.P{"mix_dir": d.Path}
+	if err := os.RemoveAll(d.Path); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to remove mix directory: %v", err)).Append(flawP)
+	}
+	if err := os.MkdirAll(d.Path, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to create mix directory: %v", err)).Append(flawP)
+	}
+	return nil
+}
+
 func (d Mix) Track(id string) MixTrack {
 	path := filepath.Join(d.Path, id)
 	return MixTrack{
@@ -117,7 +174,7 @@ type Cover struct {
 }
 
 func (c Cover) Write(b []byte) error {
-	return os.WriteFile(c.Path, b, 0o0644)
+	return os.WriteFile(c.Path, b, 0o0600)
 }
 
 func (c Cover) Read() ([]byte, error) {
@@ -128,6 +185,22 @@ type SingleTrack struct {
 	Path     string
 	InfoFile InfoFile[StoredSingleTrack]
 	Cover    Cover
+}
+
+func (d SingleTrack) CreateDir() error {
+	flawP := flaw.P{"single_dir": d.Path}
+	dir := filepath.Dir(d.Path)
+	flawP["dir"] = dir
+
+	if err := os.RemoveAll(dir); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to remove single directory: %v", err)).Append(flawP)
+	}
+	if err := os.MkdirAll(dir, 0o0755); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to create single directory: %v", err)).Append(flawP)
+	}
+	return nil
 }
 
 type InfoFile[T any] struct {

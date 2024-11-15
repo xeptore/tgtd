@@ -44,6 +44,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, accessToken string, fileNa
 				case errors.Is(err, ErrTooManyRequests):
 					return ErrTooManyRequests
 				case errutil.IsFlaw(err):
+					flawP["batch_index"] = i
 					return must.BeFlaw(err).Append(flawP)
 				default:
 					panic(errutil.UnknownError(err))
