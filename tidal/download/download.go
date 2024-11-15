@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/xeptore/tgtd/cache"
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
+	"github.com/xeptore/tgtd/httputil"
 	"github.com/xeptore/tgtd/iterutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ratelimit"
@@ -184,24 +184,13 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read track info response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		var responseBody struct {
 			Status      int    `json:"status"`
 			SubStatus   int    `json:"subStatus"`
@@ -221,6 +210,10 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
@@ -231,10 +224,18 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	var respBody struct {
 		Duration int    `json:"duration"`
 		Title    string `json:"title"`
@@ -330,29 +331,22 @@ func downloadCover(ctx context.Context, accessToken, coverID string) (b []byte, 
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get track cover response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
@@ -363,10 +357,18 @@ func downloadCover(ctx context.Context, accessToken, coverID string) (b []byte, 
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code received from get track cover: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	return respBytes, nil
 }
 
@@ -447,26 +449,15 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMe
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read album info response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err)
@@ -477,10 +468,18 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMe
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	var respBody struct {
 		Title       string `json:"title"`
 		ReleaseDate string `json:"releaseDate"`
@@ -606,29 +605,22 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, nil, flaw.From(fmt.Errorf("failed to read get track stream URLs response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, nil, must.BeFlaw(err).Append(flawP)
@@ -639,10 +631,18 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 		flawP["response_body"] = string(respBytes)
 		return nil, nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, nil, flaw.From(fmt.Errorf("unexpected status code received from get track stream URLs: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, nil, err
+	}
 	var responseBody struct {
 		ManifestMimeType string `json:"manifestMimeType"`
 		Manifest         string `json:"manifest"`
@@ -893,26 +893,15 @@ func getPlaylistMeta(ctx context.Context, accessToken, id string) (*PlaylistMeta
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read playlist info response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
@@ -923,10 +912,18 @@ func getPlaylistMeta(ctx context.Context, accessToken, id string) (*PlaylistMeta
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("received 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	var respBody struct {
 		Title       string `json:"title"`
 		Created     string `json:"created"`
@@ -1217,26 +1214,15 @@ func getMixMeta(ctx context.Context, accessToken, id string) (*MixMeta, error) {
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read mix info response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err).Append(flawP)
@@ -1247,10 +1233,18 @@ func getMixMeta(ctx context.Context, accessToken, id string) (*MixMeta, error) {
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	if !gjson.ValidBytes(respBytes) {
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("invalid mix info response json: %v", err)).Append(flawP)
@@ -1650,29 +1644,22 @@ func getPagedItems(ctx context.Context, accessToken, itemsURL string, page int) 
 	}()
 	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if nil != err {
-		switch {
-		case errors.Is(err, io.EOF):
-			return nil, flaw.From(errors.New("unexpected empty response body")).Append(flawP)
-		case errutil.IsContext(ctx):
-			return nil, ctx.Err()
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, context.DeadlineExceeded
-		default:
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read get page items response body: %v", err)).Append(flawP)
-		}
-	}
-
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
 			flawP["response_body"] = string(respBytes)
 			return nil, must.BeFlaw(err)
@@ -1683,9 +1670,17 @@ func getPagedItems(ctx context.Context, accessToken, itemsURL string, page int) 
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
 	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
 	}
 
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
 	return respBytes, nil
 }
