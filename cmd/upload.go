@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
+	"strings"
 
-	"github.com/goccy/go-json"
 	"github.com/gotd/td/telegram/message"
-	"github.com/gotd/td/telegram/message/html"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
@@ -25,154 +21,108 @@ import (
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/sliceutil"
-	"github.com/xeptore/tgtd/tidl"
+	"github.com/xeptore/tgtd/tidal"
+	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
 
 func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
-	albumDir := filepath.Join(baseDir, "albums", w.currentJob.ID)
-	flawP := flaw.P{"album_dir": albumDir}
-	files, err := os.ReadDir(albumDir)
+	albumFs := tidalfs.FromAlbumDir(baseDir, w.currentJob.ID)
+
+	info, err := albumFs.InfoFile.Read()
 	if nil != err {
-		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return flaw.From(fmt.Errorf("failed to read directory: %v", err)).Append(flawP)
+		// return must.BeFlaw(err).Append(flawP)
+		return err
 	}
 
-	volumesCount := len(files)
-	flawP["volumes_count"] = volumesCount
-	loopFlawPs := make([]flaw.P, volumesCount)
-	flawP["loop_payloads"] = loopFlawPs
-	for volIdx := range volumesCount {
-		if !files[volIdx].IsDir() {
-			continue
-		}
-
+	// volumesCount := len(files)
+	// flawP["volumes_count"] = volumesCount
+	// loopFlawPs := make([]flaw.P, volumesCount)
+	// flawP["loop_payloads"] = loopFlawPs
+	for volIdx, tracks := range info.Volumes {
 		volNum := volIdx + 1
-		volDirPath := filepath.Join(albumDir, strconv.Itoa(volNum))
-		loopFlawP := flaw.P{"volume_dir": volDirPath}
-		loopFlawPs[volIdx] = loopFlawP
+		// volDirPath := filepath.Join(albumDir, strconv.Itoa(volNum))
+		// loopFlawP := flaw.P{"volume_dir": volDirPath}
+		// loopFlawPs[volIdx] = loopFlawP
 
-		txt := html.Format(nil, "<em>Uploading album volume <b>%d</b></em>", volNum)
-		if _, err := w.sender.Resolve(w.config.TargetPeerID).Reply(w.currentJob.MessageID).StyledText(ctx, txt); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
+		batchSize := mathutil.OptimalAlbumSize(len(tracks))
+		numBatches := mathutil.CeilInts(len(tracks), batchSize)
+		loopFlawPs := make([]flaw.P, numBatches)
+		flawP := flaw.P{"loop_payloads": loopFlawPs}
+
+		batches := iterutil.WithIndex(slices.Chunk(tracks, batchSize))
+		for i, batch := range batches {
+			// fileNames := sliceutil.Map(batch, func(track tidalfs.StoredAlbumVolumeTrack) string { return track.FileName() })
+			// loopFlawP := flaw.P{"file_names": fileNames}
+			// loopFlawPs[i] = loopFlawP
+
+			caption := []styling.StyledTextOption{
+				styling.Plain(info.Caption),
+				styling.Plain("\n"),
+				styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 			}
 
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to send message: %v", err)).Append(flawP)
-		}
+			items := sliceutil.Map(batch, func(track tidalfs.StoredAlbumVolumeTrack) TrackUploadInfo {
+				trackFs := albumFs.Track(volNum, track.ID)
+				return TrackUploadInfo{
+					FilePath:   trackFs.Path,
+					ArtistName: track.Artist,
+					Title:      track.Title,
+					Version:    track.Version,
+					Duration:   track.Duration,
+					Format:     track.Format,
+					CoverID:    track.CoverID,
+					CoverPath:  albumFs.Cover.Path,
+				}
+			})
 
-		vol, err := w.readVolumeInfo(volDirPath)
-		if nil != err {
-			return must.BeFlaw(err).Append(flawP)
-		}
-
-		if err := w.uploadVolumeTracks(ctx, baseDir, *vol); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
+			if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
+				if errutil.IsContext(ctx) {
+					return ctx.Err()
+				}
+				return must.BeFlaw(err).Append(flawP)
 			}
-			return must.BeFlaw(err).Append(flawP)
-		}
-
-		txt = html.Format(nil, "<em>Album volume <b>%d</b> uploaded</em>", volNum)
-		if _, err := w.sender.Resolve(w.config.TargetPeerID).Reply(w.currentJob.MessageID).StyledText(ctx, txt); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
-			}
-
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to send message: %v", err)).Append(flawP)
-		}
-	}
-	return nil
-}
-
-func (w *Worker) readVolumeInfo(dirPath string) (vol *tidl.Volume, err error) {
-	volumeInfoFilePath := filepath.Join(dirPath, "volume.json")
-	flawP := flaw.P{"volume_info_file_path": volumeInfoFilePath}
-	f, err := os.OpenFile(volumeInfoFilePath, os.O_RDONLY, 0o644)
-	if nil != err {
-		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to open volume info file: %v", err)).Append(flawP)
-	}
-	defer func() {
-		if closeErr := f.Close(); nil != closeErr {
-			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close volume info file: %v", closeErr)).Append(flawP)
-			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
-			}
-		}
-	}()
-
-	var out tidl.Volume
-	if err := json.NewDecoder(f).Decode(&out); nil != err {
-		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to unmarshal volume file: %v", err)).Append(flawP)
-	}
-	return &out, nil
-}
-
-func (w *Worker) uploadVolumeTracks(ctx context.Context, baseDir string, vol tidl.Volume) error {
-	batchSize := mathutil.OptimalAlbumSize(len(vol.Tracks))
-	numBatches := mathutil.CeilInts(len(vol.Tracks), batchSize)
-	loopFlawPs := make([]flaw.P, numBatches)
-	flawP := flaw.P{"loop_payloads": loopFlawPs}
-
-	batches := iterutil.WithIndex(slices.Chunk(vol.Tracks, batchSize))
-	for i, batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.AlbumTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs[i] = loopFlawP
-
-		caption := []styling.StyledTextOption{
-			styling.Plain(vol.Album.Title),
-			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("[%d]", vol.Album.Year)),
-			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("#%d", vol.Number)),
-			styling.Plain("\n"),
-			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
-		}
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
-			}
-			return must.BeFlaw(err).Append(flawP)
 		}
 	}
 	return nil
 }
 
 func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
-	playlistDir := filepath.Join(baseDir, "playlists", w.currentJob.ID)
-	flawP := flaw.P{"playlist_dir": playlistDir}
+	flawP := flaw.P{}
+	playlistFs := tidalfs.FromPlaylistDir(baseDir, w.currentJob.ID)
 
-	playlist, err := readDirInfo[tidl.Playlist](playlistDir)
+	info, err := playlistFs.InfoFile.Read()
 	if nil != err {
-		return must.BeFlaw(err).Append(flawP)
+		return err
 	}
 
-	batchSize := mathutil.OptimalAlbumSize(len(playlist.Tracks))
-	batches := iterutil.WithIndex(slices.Chunk(playlist.Tracks, batchSize))
-	numBatches := mathutil.CeilInts(len(playlist.Tracks), batchSize)
+	batchSize := mathutil.OptimalAlbumSize(len(info.Tracks))
+	batches := iterutil.WithIndex(slices.Chunk(info.Tracks, batchSize))
+	numBatches := mathutil.CeilInts(len(info.Tracks), batchSize)
 	loopFlawPs := make([]flaw.P, numBatches)
 	flawP["loop_payloads"] = loopFlawPs
 
 	for i, batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.PlaylistTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
-		loopFlawPs[i] = loopFlawP
-
 		caption := []styling.StyledTextOption{
-			styling.Plain(playlist.Title),
-			styling.Plain(" "),
-			styling.Plain(fmt.Sprintf("[%d - %d]", playlist.CreatedAtYear, playlist.LastUpdatedAtYear)),
+			styling.Plain(info.Caption),
 			styling.Plain("\n"),
 			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
+
+		items := sliceutil.Map(batch, func(track tidalfs.StoredPlaylistTrack) TrackUploadInfo {
+			trackFs := playlistFs.Track(track.ID)
+			return TrackUploadInfo{
+				FilePath:   trackFs.Path,
+				ArtistName: track.Artist,
+				Title:      track.Title,
+				Version:    track.Version,
+				Duration:   track.Duration,
+				Format:     track.Format,
+				CoverID:    track.CoverID,
+				CoverPath:  trackFs.Cover.Path,
+			}
+		})
+
+		if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
@@ -183,31 +133,45 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 }
 
 func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
-	mixDir := filepath.Join(baseDir, "mixes", w.currentJob.ID)
-	flawP := flaw.P{"mix_dir": mixDir}
+	flawP := flaw.P{}
+	mixFs := tidalfs.FromMixDir(baseDir, w.currentJob.ID)
 
-	mix, err := readDirInfo[tidl.Mix](mixDir)
+	info, err := mixFs.InfoFile.Read()
 	if nil != err {
-		return must.BeFlaw(err).Append(flawP)
+		return err
 	}
 
-	batchSize := mathutil.OptimalAlbumSize(len(mix.Tracks))
-	batches := iterutil.WithIndex(slices.Chunk(mix.Tracks, batchSize))
-	numBatches := mathutil.CeilInts(len(mix.Tracks), batchSize)
+	batchSize := mathutil.OptimalAlbumSize(len(info.Tracks))
+	batches := iterutil.WithIndex(slices.Chunk(info.Tracks, batchSize))
+	numBatches := mathutil.CeilInts(len(info.Tracks), batchSize)
 	loopFlawPs := make([]flaw.P, numBatches)
 	flawP["loop_payloads"] = loopFlawPs
 
 	for i, batch := range batches {
-		fileNames := sliceutil.Map(batch, func(track tidl.MixTrack) string { return track.FileName() })
-		loopFlawP := flaw.P{"file_names": fileNames}
+		loopFlawP := flaw.P{"file_names": nil}
 		loopFlawPs[i] = loopFlawP
 
 		caption := []styling.StyledTextOption{
-			styling.Plain(mix.Title),
+			styling.Plain(info.Caption),
 			styling.Plain("\n"),
 			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
-		if err := w.uploadTracksBatch(ctx, baseDir, fileNames, caption); nil != err {
+
+		items := sliceutil.Map(batch, func(track tidalfs.StoredMixTrack) TrackUploadInfo {
+			trackFs := mixFs.Track(track.ID)
+			return TrackUploadInfo{
+				FilePath:   trackFs.Path,
+				ArtistName: track.Artist,
+				Title:      track.Title,
+				Version:    track.Version,
+				Duration:   track.Duration,
+				Format:     track.Format,
+				CoverID:    track.CoverID,
+				CoverPath:  trackFs.Cover.Path,
+			}
+		})
+
+		if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
@@ -217,8 +181,8 @@ func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
 	return nil
 }
 
-func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileNames []string, caption []styling.StyledTextOption) (err error) {
-	album := make([]message.MultiMediaOption, len(fileNames))
+func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
+	album := make([]message.MultiMediaOption, len(batch))
 
 	flawP := flaw.P{}
 
@@ -243,27 +207,15 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(ratelimit.AlbumUploadConcurrency)
 
-	loopFlawPs := make([]flaw.P, len(fileNames))
+	loopFlawPs := make([]flaw.P, len(batch))
 	flawP["loop_payloads"] = loopFlawPs
-	for i, trackFileName := range fileNames {
+	for i, item := range batch {
 		wg.Go(func() error {
-			fileName := filepath.Join(baseDir, trackFileName)
-			loopFlawP := flaw.P{"file_name": fileName}
-			loopFlawPs[i] = loopFlawP
-
-			info, err := tidl.ReadTrackInfoFile(fileName)
-			if nil != err {
-				return must.BeFlaw(err).Append(flawP)
-			}
-			loopFlawP["info"] = info.FlawP()
-
-			w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Uploading track")
-
 			builder := newTrackUploadBuilder(&w.cache.UploadedCovers)
-			if i == len(fileNames)-1 { // last track in this batch
+			if i == len(batch)-1 { // last track in this batch
 				builder.WithCaption(caption)
 			}
-			document, err := builder.uploadTrack(wgCtx, up, fileName, *info)
+			document, err := builder.uploadTrack(wgCtx, up, item)
 			if nil != err {
 				if errutil.IsContext(wgCtx) {
 					return wgCtx.Err()
@@ -271,7 +223,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 				return must.BeFlaw(err).Append(flawP)
 			}
 			album[i] = document
-			w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Track uploaded")
+			// w.logger.Info().Str("file_name", fileName).Func(info.Log).Msg("Track uploaded")
 			return nil
 		})
 	}
@@ -300,49 +252,16 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, baseDir string, fileName
 	return nil
 }
 
-func readDirInfo[T any](dirPath string) (inf *T, err error) {
-	infoFilePath := filepath.Join(dirPath, "info.json")
-	flawP := flaw.P{"info_file_path": infoFilePath}
-	f, err := os.OpenFile(infoFilePath, os.O_RDONLY, 0o644)
+func (w *Worker) uploadSingle(ctx context.Context, basedir string) (err error) {
+	flawP := flaw.P{}
+	trackFs := tidalfs.FromSingleTrack(basedir, w.currentJob.ID)
+
+	info, err := trackFs.InfoFile.Read()
 	if nil != err {
-		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to open dir info file: %v", err)).Append(flawP)
+		// return must.BeFlaw(err).Append(flawP)
+		return err
 	}
-	defer func() {
-		if closeErr := f.Close(); nil != closeErr {
-			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
-			closeErr = flaw.From(fmt.Errorf("failed to close dir info file: %v", closeErr)).Append(flawP)
-			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
-			}
-		}
-	}()
-
-	if err := json.NewDecoder(f).Decode(&inf); nil != err {
-		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, flaw.From(fmt.Errorf("failed to unmarshal dir info file: %v", err)).Append(flawP)
-	}
-
-	return inf, nil
-}
-
-func (w *Worker) uploadSingle(ctx context.Context, basePath string) (err error) {
-	fileName := filepath.Join(basePath, "singles", w.currentJob.ID, "audio")
-	flawP := flaw.P{"file_name": fileName}
-
-	track, err := tidl.ReadTrackInfoFile(fileName)
-	if nil != err {
-		return must.BeFlaw(err).Append(flawP)
-	}
-	flawP["track_info"] = track.FlawP()
-
-	album, err := tidl.ReadTrackAlbumInfoFile(filepath.Dir(fileName))
-	if nil != err {
-		return must.BeFlaw(err).Append(flawP)
-	}
-	flawP["album_info"] = album.FlawP()
+	// flawP["track_info"] = track.FlawP()
 
 	up, cancel := w.newUploader(ctx)
 	defer func() {
@@ -363,11 +282,21 @@ func (w *Worker) uploadSingle(ctx context.Context, basePath string) (err error) 
 	}()
 
 	caption := []styling.StyledTextOption{
-		styling.Plain(album.Title),
+		styling.Plain(info.Album.Title),
 		styling.Plain(" "),
-		styling.Plain(fmt.Sprintf("[%d]", album.Year)),
+		styling.Plain(fmt.Sprintf("(%d)", info.Album.Year)),
 	}
-	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, up, fileName, *track)
+	uploadInfo := TrackUploadInfo{
+		FilePath:   trackFs.Path,
+		ArtistName: info.Artist,
+		Title:      info.Title,
+		Version:    info.Version,
+		Duration:   info.Duration,
+		Format:     info.Format,
+		CoverID:    info.CoverID,
+		CoverPath:  trackFs.Cover.Path,
+	}
+	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, up, uploadInfo)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
@@ -401,18 +330,22 @@ func (u *TrackUploadBuilder) WithCaption(c []styling.StyledTextOption) *TrackUpl
 	return u
 }
 
-func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader.Uploader, fileName string, info tidl.TrackInfo) (*message.UploadedDocumentBuilder, error) {
-	coverFileName := fileName + ".jpg"
-	flawP := flaw.P{"cover_file_name": coverFileName}
+type TrackUploadInfo struct {
+	FilePath   string
+	ArtistName string
+	Title      string
+	Version    *string
+	Duration   int
+	Format     tidal.TrackFormat
+	CoverID    string
+	CoverPath  string
+}
 
-	cachedCover, err := u.cache.Fetch(coverFileName, cache.DefaultUploadedCoverTTL, func() (tg.InputFileClass, error) {
-		coverBytes, err := os.ReadFile(coverFileName)
-		if nil != err {
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to read track cover file: %v", err)).Append(flawP)
-		}
+func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader.Uploader, info TrackUploadInfo) (*message.UploadedDocumentBuilder, error) {
+	flawP := flaw.P{}
 
-		uploadedCover, err := uploader.FromBytes(ctx, filepath.Base(coverFileName), coverBytes)
+	cachedCover, err := u.cache.Fetch(info.CoverID, cache.DefaultUploadedCoverTTL, func() (tg.InputFileClass, error) {
+		uploadedCover, err := uploader.FromPath(ctx, info.CoverPath)
 		if nil != err {
 			if errutil.IsContext(ctx) {
 				return nil, ctx.Err()
@@ -428,7 +361,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 	}
 	cover := cachedCover.Value()
 
-	upload, err := uploader.FromPath(ctx, fileName)
+	upload, err := uploader.FromPath(ctx, info.FilePath)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
@@ -462,9 +395,24 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 	return document, nil
 }
 
-func uploadTrackFileName(info tidl.TrackInfo) string {
+func uploadTrackFileName(info TrackUploadInfo) string {
+	ext := inferTrackExt(info.Format)
 	if nil != info.Version {
-		return fmt.Sprintf("%s - %s (%s).%s", info.ArtistName, info.Title, *info.Version, info.Format.Ext)
+		return fmt.Sprintf("%s - %s (%s).%s", info.ArtistName, info.Title, *info.Version, ext)
 	}
-	return fmt.Sprintf("%s - %s.%s", info.ArtistName, info.Title, info.Format.Ext)
+	return fmt.Sprintf("%s - %s.%s", info.ArtistName, info.Title, ext)
+}
+
+func inferTrackExt(format tidal.TrackFormat) string {
+	switch format.MimeType {
+	case "audio/mp4":
+		switch strings.ToLower(format.Codec) {
+		case "eac3", "aac", "flac", "alac":
+			return "m4a"
+		default:
+			panic(fmt.Sprintf("unsupported codec %q for audio/mp4 mime type", format.Codec))
+		}
+	default:
+		panic(fmt.Sprintf("unsupported mime type %q", format.MimeType))
+	}
 }

@@ -119,8 +119,9 @@ func (s S) flawP() flaw.P {
 }
 
 type StreamInfo struct {
-	Codec string
-	Parts Parts
+	Codec    string
+	MimeType string
+	Parts    Parts
 }
 
 func (si StreamInfo) FlawP() flaw.P {
@@ -183,7 +184,8 @@ func ParseStreamInfo(r io.Reader) (*StreamInfo, error) {
 	}
 
 	return &StreamInfo{
-		Codec: codec,
-		Parts: *parts,
+		Codec:    codec,
+		MimeType: mpd.Period.AdaptationSet.MimeType,
+		Parts:    *parts,
 	}, nil
 }

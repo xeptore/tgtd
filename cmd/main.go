@@ -40,8 +40,8 @@ import (
 	"github.com/xeptore/tgtd/log"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tgutil"
-	"github.com/xeptore/tgtd/tidl"
-	"github.com/xeptore/tgtd/tidl/auth"
+	"github.com/xeptore/tgtd/tidal/auth"
+	tidaldl "github.com/xeptore/tgtd/tidal/download"
 )
 
 const (
@@ -173,9 +173,9 @@ func run(cliCtx *cli.Context) (err error) {
 		config:     cfg,
 		client:     client,
 		sender:     nil,
-		tidlAuth:   nil,
+		tidalAuth:  nil,
 		currentJob: nil,
-		cache:      cache.New[*tidl.Album](),
+		cache:      cache.New[tidaldl.AlbumMeta](),
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
@@ -335,7 +335,7 @@ func run(cliCtx *cli.Context) (err error) {
 		}
 
 		logger.Debug().Msg("TIDAL access token verified")
-		w.tidlAuth = tidlAuth
+		w.tidalAuth = tidlAuth
 		d.OnNewMessage(buildOnMessage(w, clientCtx, *cfg))
 
 		logger.Info().Msg("Bot is running")
@@ -491,7 +491,7 @@ func buildOnMessage(w *Worker, msgCtx context.Context, cfg config.Config) func(c
 				}
 			}
 
-			w.tidlAuth = res.Unwrap()
+			w.tidalAuth = res.Unwrap()
 
 			lines = []styling.StyledTextOption{
 				styling.Plain("TIDAL authentication was successful!"),
@@ -541,7 +541,7 @@ func buildOnMessage(w *Worker, msgCtx context.Context, cfg config.Config) func(c
 						return nil
 					}
 					return nil
-				case errors.Is(err, tidl.ErrTooManyRequests):
+				case errors.Is(err, tidaldl.ErrTooManyRequests):
 					if _, err := reply.StyledText(msgCtx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
 						if errors.Is(msgCtx.Err(), context.Canceled) {
 							return nil
@@ -669,9 +669,9 @@ type Worker struct {
 	config     *config.Config
 	client     *telegram.Client
 	sender     *message.Sender
-	tidlAuth   *auth.Auth
+	tidalAuth  *auth.Auth
 	currentJob *Job
-	cache      *cache.Cache[*tidl.Album]
+	cache      *cache.Cache[tidaldl.AlbumMeta]
 	logger     zerolog.Logger
 }
 
@@ -772,12 +772,6 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	w.currentJob = &job
 
 	const downloadBaseDir = "downloads"
-	downloader := tidl.NewDownloader(
-		w.tidlAuth,
-		downloadBaseDir,
-		w.cache,
-		w.logger.With().Logger(),
-	)
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
@@ -795,14 +789,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := downloader.Playlist(jobCtx, id); nil != err {
+			if err := tidaldl.Playlist(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
-				case errors.Is(err, tidl.ErrTooManyRequests):
-					return attemptRemained, tidl.ErrTooManyRequests
+				case errors.Is(err, tidaldl.ErrTooManyRequests):
+					return attemptRemained, tidaldl.ErrTooManyRequests
 				case errutil.IsFlaw(err):
 					return false, must.BeFlaw(err).Append(flawP)
 				default:
@@ -854,14 +848,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := downloader.Album(jobCtx, id); nil != err {
+			if err := tidaldl.Album(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
-				case errors.Is(err, tidl.ErrTooManyRequests):
-					return attemptRemained, tidl.ErrTooManyRequests
+				case errors.Is(err, tidaldl.ErrTooManyRequests):
+					return attemptRemained, tidaldl.ErrTooManyRequests
 				case errutil.IsFlaw(err):
 					return false, must.BeFlaw(err).Append(flawP)
 				default:
@@ -909,14 +903,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := downloader.Track(jobCtx, id); nil != err {
+			if err := tidaldl.Single(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
-				case errors.Is(err, tidl.ErrTooManyRequests):
-					return attemptRemained, tidl.ErrTooManyRequests
+				case errors.Is(err, tidaldl.ErrTooManyRequests):
+					return attemptRemained, tidaldl.ErrTooManyRequests
 				case errutil.IsFlaw(err):
 					return false, must.BeFlaw(err).Append(flawP)
 				default:
@@ -964,14 +958,14 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := downloader.Mix(jobCtx, id); nil != err {
+			if err := tidaldl.Mix(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
-				case errors.Is(err, tidl.ErrTooManyRequests):
-					return attemptRemained, tidl.ErrTooManyRequests
+				case errors.Is(err, tidaldl.ErrTooManyRequests):
+					return attemptRemained, tidaldl.ErrTooManyRequests
 				case errutil.IsFlaw(err):
 					return false, must.BeFlaw(err).Append(flawP)
 				default:
