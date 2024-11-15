@@ -1,4 +1,4 @@
-package tidl
+package download
 
 import (
 	"bytes"
@@ -22,12 +22,11 @@ import (
 )
 
 type VndTrackStream struct {
-	URL             string
-	AuthAccessToken string
+	URL string
 }
 
-func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
-	fileSize, err := d.fileSize(ctx)
+func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileName string) error {
+	fileSize, err := d.fileSize(ctx, accessToken)
 	if nil != err {
 		return err
 	}
@@ -45,10 +44,10 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 			loopFlawP := flaw.P{"start": start, "end": end}
 			loopFlawPs[i] = loopFlawP
 
-			fileName := fileName + ".part." + strconv.Itoa(i)
-			loopFlawP["file_name"] = fileName
+			partFileName := fileName + ".part." + strconv.Itoa(i)
+			loopFlawP["part_file_name"] = partFileName
 
-			f, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
+			f, err := os.OpenFile(partFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
 			if nil != err {
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 				return flaw.From(fmt.Errorf("failed to create track part file: %v", err)).Append(flawP)
@@ -74,7 +73,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 				}
 			}()
 
-			if err := d.downloadRange(wgCtx, start, end, f); nil != err {
+			if err := d.downloadRange(wgCtx, accessToken, start, end, f); nil != err {
 				switch {
 				case errutil.IsContext(wgCtx):
 					return wgCtx.Err()
@@ -147,7 +146,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, fileName string) error {
 	return nil
 }
 
-func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
+func (d *VndTrackStream) fileSize(ctx context.Context, accessToken string) (size int, err error) {
 	flawP := flaw.P{}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, d.URL, nil)
 	if nil != err {
@@ -158,7 +157,7 @@ func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return 0, flaw.From(fmt.Errorf("failed to create get track metada request: %v", err)).Append(flawP)
 	}
-	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	req.Header.Add("Authorization", "Bearer "+accessToken)
 
 	client := http.Client{Timeout: config.GetTrackFileSizeRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
@@ -237,6 +236,7 @@ func (d *VndTrackStream) fileSize(ctx context.Context) (size int, err error) {
 
 type VNDManifest struct {
 	MimeType       string   `json:"mimeType"`
+	Codec          string   `json:"codecs"`
 	KeyID          *string  `json:"keyId"`
 	EncryptionType string   `json:"encryptionType"`
 	URLs           []string `json:"urls"`
@@ -251,7 +251,7 @@ func (m *VNDManifest) FlawP() flaw.P {
 	}
 }
 
-func (d *VndTrackStream) downloadRange(ctx context.Context, start, end int, f *os.File) (err error) {
+func (d *VndTrackStream) downloadRange(ctx context.Context, accessToken string, start, end int, f *os.File) (err error) {
 	flawP := flaw.P{}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL, nil)
 	if nil != err {
@@ -262,7 +262,7 @@ func (d *VndTrackStream) downloadRange(ctx context.Context, start, end int, f *o
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
 	}
-	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	req.Header.Add("Authorization", "Bearer "+accessToken)
 	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
 	client := http.Client{Timeout: config.VNDSegmentDownloadTimeout} //nolint:exhaustruct

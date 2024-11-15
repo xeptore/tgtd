@@ -1,4 +1,4 @@
-package tidl
+package download
 
 import (
 	"bytes"
@@ -18,23 +18,24 @@ import (
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
-	"github.com/xeptore/tgtd/tidl/mpd"
+	"github.com/xeptore/tgtd/tidal/mpd"
 )
 
 type DashTrackStream struct {
-	Info            mpd.StreamInfo
-	AuthAccessToken string
+	Info mpd.StreamInfo
 }
 
-func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err error) {
-	numBatches := mathutil.CeilInts(d.Info.Parts.Count, maxBatchParts)
-	flawP := flaw.P{"num_batches": numBatches}
+func (d *DashTrackStream) saveTo(ctx context.Context, accessToken string, fileName string) (err error) {
+	var (
+		numBatches = mathutil.CeilInts(d.Info.Parts.Count, maxBatchParts)
+		flawP      = flaw.P{"num_batches": numBatches}
+		wg, wgCtx  = errgroup.WithContext(ctx)
+	)
 
-	wg, wgCtx := errgroup.WithContext(ctx)
 	wg.SetLimit(numBatches)
 	for i := range numBatches {
 		wg.Go(func() error {
-			if err := d.downloadBatch(wgCtx, fileName, i); nil != err {
+			if err := d.downloadBatch(wgCtx, accessToken, fileName, i); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return ctx.Err()
@@ -43,6 +44,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, fileName string) (err erro
 				case errors.Is(err, ErrTooManyRequests):
 					return ErrTooManyRequests
 				case errutil.IsFlaw(err):
+					flawP["batch_index"] = i
 					return must.BeFlaw(err).Append(flawP)
 				default:
 					panic(errutil.UnknownError(err))
@@ -138,7 +140,7 @@ func writePartToTrackFile(f *os.File, partFileName string) (err error) {
 	return nil
 }
 
-func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, idx int) (err error) {
+func (d *DashTrackStream) downloadBatch(ctx context.Context, accessToken, fileName string, idx int) (err error) {
 	f, err := os.OpenFile(
 		fileName+".part."+strconv.Itoa(idx),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC,
@@ -183,7 +185,7 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 
 		link := strings.Replace(d.Info.Parts.InitializationURLTemplate, "$Number$", strconv.Itoa(segmentIdx), 1)
 		loopFlawP["link"] = link
-		if err := d.downloadSegment(ctx, link, f); nil != err {
+		if err := d.downloadSegment(ctx, accessToken, link, f); nil != err {
 			switch {
 			case errutil.IsContext(ctx):
 				return ctx.Err()
@@ -202,7 +204,7 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, fileName string, id
 	return nil
 }
 
-func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *os.File) (err error) {
+func (d *DashTrackStream) downloadSegment(ctx context.Context, accessToken, link string, f *os.File) (err error) {
 	flawP := flaw.P{}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
@@ -214,7 +216,7 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, link string, f *o
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create get track part request: %v", err)).Append(flawP)
 	}
-	req.Header.Add("Authorization", "Bearer "+d.AuthAccessToken)
+	req.Header.Add("Authorization", "Bearer "+accessToken)
 
 	client := http.Client{Timeout: config.DashSegmentDownloadTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)

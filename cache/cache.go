@@ -6,23 +6,25 @@ import (
 
 	"github.com/gotd/td/tg"
 	"github.com/karlseguin/ccache/v3"
+
+	"github.com/xeptore/tgtd/tidal"
 )
 
 var (
-	DefaultDownloadedCoverTTL = 5 * time.Minute
-	DefaultAlbumTTL           = 5 * time.Minute
-	DefaultUploadedCoverTTL   = 5 * time.Minute
+	DefaultDownloadedCoverTTL = 1 * time.Hour
+	DefaultAlbumTTL           = 1 * time.Hour
+	DefaultUploadedCoverTTL   = 1 * time.Hour
 )
 
-type Cache[TAlbum any] struct {
-	Albums           AlbumsCache[TAlbum]
+type Cache struct {
+	AlbumsMeta       AlbumsMetaCache
 	DownloadedCovers DownloadedCoversCache
 	UploadedCovers   UploadedCoversCache
 }
 
-func New[TAlbum any]() *Cache[TAlbum] {
-	albumInfoCache := ccache.New(
-		ccache.Configure[TAlbum]().
+func New() *Cache {
+	albumsMetaCache := ccache.New(
+		ccache.Configure[*tidal.AlbumMeta]().
 			MaxSize(1000).
 			GetsPerPromote(3).
 			ItemsToPrune(1),
@@ -42,9 +44,9 @@ func New[TAlbum any]() *Cache[TAlbum] {
 			ItemsToPrune(1),
 	)
 
-	return &Cache[TAlbum]{
-		Albums: AlbumsCache[TAlbum]{
-			c:   albumInfoCache,
+	return &Cache{
+		AlbumsMeta: AlbumsMetaCache{
+			c:   albumsMetaCache,
 			mux: sync.Mutex{},
 		},
 		DownloadedCovers: DownloadedCoversCache{
@@ -80,12 +82,12 @@ func (c *DownloadedCoversCache) Fetch(k string, ttl time.Duration, fetch func() 
 	return c.c.Fetch(k, ttl, fetch)
 }
 
-type AlbumsCache[T any] struct {
-	c   *ccache.Cache[T]
+type AlbumsMetaCache struct {
+	c   *ccache.Cache[*tidal.AlbumMeta]
 	mux sync.Mutex
 }
 
-func (c *AlbumsCache[T]) Fetch(k string, ttl time.Duration, fetch func() (T, error)) (*ccache.Item[T], error) {
+func (c *AlbumsMetaCache) Fetch(k string, ttl time.Duration, fetch func() (*tidal.AlbumMeta, error)) (*ccache.Item[*tidal.AlbumMeta], error) {
 	c.mux.Lock()
 	defer c.mux.Unlock()
 	return c.c.Fetch(k, ttl, fetch)
