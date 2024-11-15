@@ -6,6 +6,7 @@ import (
 
 	"github.com/gotd/td/tg"
 	"github.com/karlseguin/ccache/v3"
+	"github.com/xeptore/tgtd/tidal"
 )
 
 var (
@@ -22,7 +23,7 @@ type Cache struct {
 
 func New() *Cache {
 	albumsMetaCache := ccache.New(
-		ccache.Configure[*AlbumMeta]().
+		ccache.Configure[*tidal.AlbumMeta]().
 			MaxSize(1000).
 			GetsPerPromote(3).
 			ItemsToPrune(1),
@@ -81,18 +82,12 @@ func (c *DownloadedCoversCache) Fetch(k string, ttl time.Duration, fetch func() 
 }
 
 type AlbumsMetaCache struct {
-	c   *ccache.Cache[*AlbumMeta]
+	c   *ccache.Cache[*tidal.AlbumMeta]
 	mux sync.Mutex
 }
 
-func (c *AlbumsMetaCache) Fetch(k string, ttl time.Duration, fetch func() (*AlbumMeta, error)) (*ccache.Item[*AlbumMeta], error) {
+func (c *AlbumsMetaCache) Fetch(k string, ttl time.Duration, fetch func() (*tidal.AlbumMeta, error)) (*ccache.Item[*tidal.AlbumMeta], error) {
 	c.mux.Lock()
 	defer c.mux.Unlock()
 	return c.c.Fetch(k, ttl, fetch)
-}
-
-type AlbumMeta struct {
-	Title   string
-	Year    int
-	CoverID string
 }

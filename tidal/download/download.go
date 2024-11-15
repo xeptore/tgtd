@@ -23,7 +23,6 @@ import (
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/iterutil"
 	"github.com/xeptore/tgtd/must"
-	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidal"
 	"github.com/xeptore/tgtd/tidal/auth"
@@ -121,6 +120,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTrackMeta, error) {
 	trackURL := fmt.Sprintf(trackAPIFormat, id)
 	flawP := flaw.P{"url": trackURL}
+
 	reqURL, err := url.Parse(trackURL)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -366,25 +366,19 @@ func downloadCover(ctx context.Context, accessToken, coverID string) (b []byte, 
 	return respBytes, nil
 }
 
-func (d *Downloader) getAlbumMeta(ctx context.Context, id string) (*AlbumMeta, error) {
+func (d *Downloader) getAlbumMeta(ctx context.Context, id string) (*tidal.AlbumMeta, error) {
 	cachedAlbumMeta, err := d.albumsMetaCache.Fetch(
 		id,
 		cache.DefaultAlbumTTL,
-		func() (*cache.AlbumMeta, error) {
-			m, err := fetchAlbumMeta(ctx, d.accessToken, id)
-			if nil != err {
-				return nil, err
-			}
-			return ptr.Of(cache.AlbumMeta(*m)), nil
-		},
+		func() (*tidal.AlbumMeta, error) { return fetchAlbumMeta(ctx, d.accessToken, id) },
 	)
 	if nil != err {
 		return nil, err
 	}
-	return ptr.Of(AlbumMeta(*cachedAlbumMeta.Value())), nil
+	return cachedAlbumMeta.Value(), nil
 }
 
-func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*AlbumMeta, error) {
+func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMeta, error) {
 	albumURL, err := url.JoinPath(fmt.Sprintf(albumAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -500,17 +494,11 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*AlbumMeta, er
 		return nil, flaw.From(fmt.Errorf("failed to parse album release date: %v", err)).Append(flawP)
 	}
 
-	return &AlbumMeta{
+	return &tidal.AlbumMeta{
 		Title:   respBody.Title,
 		Year:    releaseDate.Year(),
 		CoverID: respBody.CoverID,
 	}, nil
-}
-
-type AlbumMeta struct {
-	Title   string
-	Year    int
-	CoverID string
 }
 
 func downloadTrack(ctx context.Context, accessToken, id string, fileName string) (*tidal.TrackFormat, error) {

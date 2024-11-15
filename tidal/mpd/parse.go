@@ -173,18 +173,13 @@ func ParseStreamInfo(r io.Reader) (*StreamInfo, error) {
 	}
 	flawP := flaw.P{"parsed_mpd": mpd.flawP()}
 
-	codec := mpd.Period.AdaptationSet.Representation.Codecs
-	if codec != "flac" {
-		return nil, flaw.From(fmt.Errorf("unexpected mpd codec: %s", codec)).Append(flawP)
-	}
-
 	parts, err := mpd.parts()
 	if nil != err {
 		return nil, flaw.From(fmt.Errorf("failed to get parts: %v", err)).Append(flawP)
 	}
 
 	return &StreamInfo{
-		Codec:    codec,
+		Codec:    mpd.Period.AdaptationSet.Representation.Codecs,
 		MimeType: mpd.Period.AdaptationSet.MimeType,
 		Parts:    *parts,
 	}, nil
