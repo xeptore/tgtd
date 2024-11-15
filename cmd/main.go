@@ -176,7 +176,7 @@ func run(cliCtx *cli.Context) (err error) {
 		sender:     nil,
 		tidalAuth:  nil,
 		currentJob: nil,
-		cache:      cache.New[tidaldl.AlbumMeta](),
+		cache:      cache.New(),
 		logger:     logger.With().Str("module", "worker").Logger(),
 	}
 
@@ -672,7 +672,7 @@ type Worker struct {
 	sender     *message.Sender
 	tidalAuth  *auth.Auth
 	currentJob *Job
-	cache      *cache.Cache[tidaldl.AlbumMeta]
+	cache      *cache.Cache
 	logger     zerolog.Logger
 }
 
@@ -776,6 +776,13 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
+	dl := tidaldl.NewDownloader(
+		downloadBaseDir,
+		w.tidalAuth.Creds.AccessToken,
+		&w.cache.AlbumsMeta,
+		&w.cache.DownloadedCovers,
+	)
+
 	switch kind {
 	case "playlist":
 		w.logger.Info().Str("id", id).Str("link", link).Msg("Starting download playlist")
@@ -790,7 +797,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := tidaldl.Playlist(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
+			if err := dl.Playlist(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
@@ -849,7 +856,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := tidaldl.Album(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
+			if err := dl.Album(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
@@ -904,7 +911,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := tidaldl.Single(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
+			if err := dl.Single(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
@@ -959,7 +966,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
-			if err := tidaldl.Mix(jobCtx, downloadBaseDir, w.tidalAuth.Creds.AccessToken, id); nil != err {
+			if err := dl.Mix(jobCtx, id); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
