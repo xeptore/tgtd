@@ -1002,6 +1002,8 @@ func getPlaylistTracks(ctx context.Context, accessToken, id string) ([]ListTrack
 	return tracks, nil
 }
 
+const pageItemTypeTrack = "track"
+
 func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (ts []ListTrackMeta, rem int, err error) {
 	playlistURL, err := url.JoinPath(fmt.Sprintf(playlistItemsAPIFormat, id))
 	if nil != err {
@@ -1060,7 +1062,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 	}
 
 	for _, v := range respBody.Items {
-		if v.Type != "track" {
+		if v.Type != pageItemTypeTrack {
 			continue
 		}
 		if v.Cut != nil {
@@ -1364,7 +1366,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 	}
 
 	for _, v := range responseBody.Items {
-		if v.Type != "track" {
+		if v.Type != pageItemTypeTrack {
 			continue
 		}
 
@@ -1570,7 +1572,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 	}
 
 	for _, v := range respBody.Items {
-		if v.Type != "track" {
+		if v.Type != pageItemTypeTrack {
 			continue
 		}
 
