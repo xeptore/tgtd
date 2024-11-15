@@ -25,8 +25,8 @@ import (
 	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
 
-func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
-	albumFs := tidalfs.FromAlbumDir(baseDir, w.currentJob.ID)
+func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error {
+	albumFs := dir.Album(w.currentJob.ID)
 
 	info, err := albumFs.InfoFile.Read()
 	if nil != err {
@@ -86,9 +86,9 @@ func (w *Worker) uploadAlbum(ctx context.Context, baseDir string) error {
 	return nil
 }
 
-func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
+func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) error {
 	flawP := flaw.P{}
-	playlistFs := tidalfs.FromPlaylistDir(baseDir, w.currentJob.ID)
+	playlistFs := dir.Playlist(w.currentJob.ID)
 
 	info, err := playlistFs.InfoFile.Read()
 	if nil != err {
@@ -132,9 +132,9 @@ func (w *Worker) uploadPlaylist(ctx context.Context, baseDir string) error {
 	return nil
 }
 
-func (w *Worker) uploadMix(ctx context.Context, baseDir string) error {
+func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 	flawP := flaw.P{}
-	mixFs := tidalfs.FromMixDir(baseDir, w.currentJob.ID)
+	mixFs := dir.Mix(w.currentJob.ID)
 
 	info, err := mixFs.InfoFile.Read()
 	if nil != err {
@@ -252,9 +252,9 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo,
 	return nil
 }
 
-func (w *Worker) uploadSingle(ctx context.Context, basedir string) (err error) {
+func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err error) {
 	flawP := flaw.P{}
-	trackFs := tidalfs.FromSingleTrack(basedir, w.currentJob.ID)
+	trackFs := dir.Single(w.currentJob.ID)
 
 	info, err := trackFs.InfoFile.Read()
 	if nil != err {

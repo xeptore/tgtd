@@ -46,7 +46,7 @@ const (
 
 var ErrTooManyRequests = errors.New("too many requests")
 
-func Single(ctx context.Context, dir, accessToken, id string) error {
+func Single(ctx context.Context, dir fs.DownloadDir, accessToken, id string) error {
 	track, err := getSingleTrackMeta(ctx, accessToken, id)
 	if nil != err {
 		return err
@@ -57,7 +57,7 @@ func Single(ctx context.Context, dir, accessToken, id string) error {
 		return err
 	}
 
-	trackFs := fs.FromSingleTrack(dir, id)
+	trackFs := dir.Single(id)
 
 	if err := trackFs.Cover.Write(coverBytes); nil != err {
 		return err
@@ -713,7 +713,7 @@ type ListTrackMeta struct {
 	Duration int
 }
 
-func Playlist(ctx context.Context, baseDir, accessToken, id string) error {
+func Playlist(ctx context.Context, dir fs.DownloadDir, accessToken, id string) error {
 	playlist, err := getPlaylistMeta(ctx, accessToken, id)
 	if nil != err {
 		return err
@@ -727,7 +727,7 @@ func Playlist(ctx context.Context, baseDir, accessToken, id string) error {
 	var (
 		wg, wgCtx  = errgroup.WithContext(ctx)
 		formats    = make(map[int]tidal.TrackFormat, len(tracks))
-		playlistFs = fs.FromPlaylistDir(baseDir, id)
+		playlistFs = dir.Playlist(id)
 	)
 	wg.SetLimit(ratelimit.PlaylistDownloadConcurrency)
 	for i, track := range tracks {
@@ -1032,7 +1032,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 	return ts, respBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
-func Mix(ctx context.Context, baseDir, accessToken, id string) error {
+func Mix(ctx context.Context, dir fs.DownloadDir, accessToken, id string) error {
 	mix, err := getMixMeta(ctx, accessToken, id)
 	if nil != err {
 		return err
@@ -1046,7 +1046,7 @@ func Mix(ctx context.Context, baseDir, accessToken, id string) error {
 	var (
 		wg, wgCtx = errgroup.WithContext(ctx)
 		formats   = make(map[int]tidal.TrackFormat, len(tracks))
-		mixFs     = fs.FromMixDir(baseDir, id)
+		mixFs     = dir.Mix(id)
 	)
 	wg.SetLimit(ratelimit.MixDownloadConcurrency)
 	for i, track := range tracks {
@@ -1329,7 +1329,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 	return ts, responseBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
-func Album(ctx context.Context, baseDir, accessToken, id string) error {
+func Album(ctx context.Context, dir fs.DownloadDir, accessToken, id string) error {
 	album, err := getAlbumMeta(ctx, accessToken, id)
 	if nil != err {
 		return err
@@ -1340,7 +1340,7 @@ func Album(ctx context.Context, baseDir, accessToken, id string) error {
 		return err
 	}
 
-	albumFs := fs.FromAlbumDir(baseDir, id)
+	albumFs := dir.Album(id)
 	if err := albumFs.Cover.Write(coverBytes); nil != err {
 		return err
 	}

@@ -13,17 +13,23 @@ import (
 	"github.com/xeptore/tgtd/must"
 )
 
-func FromAlbumDir(basedir, id string) AlbumDir {
-	path := filepath.Join(basedir, "albums", id)
-	return AlbumDir{
+type DownloadDir string
+
+func From(d string) DownloadDir {
+	return DownloadDir(d)
+}
+
+func (d DownloadDir) Album(id string) Album {
+	path := filepath.Join(string(d), "albums", id)
+	return Album{
 		Path:     path,
 		InfoFile: InfoFile[StoredAlbum]{Path: filepath.Join(path, "info.json")},
 		Cover:    Cover{Path: filepath.Join(path, "cover.jpg")},
 	}
 }
 
-func FromSingleTrack(basedir, id string) SingleTrack {
-	path := filepath.Join(basedir, "singles", id)
+func (d DownloadDir) Single(id string) SingleTrack {
+	path := filepath.Join(string(d), "singles", id)
 	return SingleTrack{
 		Path:     path,
 		InfoFile: InfoFile[StoredSingleTrack]{Path: path + ".json"},
@@ -31,29 +37,29 @@ func FromSingleTrack(basedir, id string) SingleTrack {
 	}
 }
 
-func FromPlaylistDir(basedir, id string) PlaylistDir {
-	path := filepath.Join(basedir, "playlists", id)
-	return PlaylistDir{
+func (d DownloadDir) Playlist(id string) Playlist {
+	path := filepath.Join(string(d), "playlists", id)
+	return Playlist{
 		Path:     path,
 		InfoFile: InfoFile[StoredPlaylist]{Path: filepath.Join(path, "info.json")},
 	}
 }
 
-func FromMixDir(basedir, id string) MixDir {
-	path := filepath.Join(basedir, "mixes", id)
-	return MixDir{
+func (d DownloadDir) Mix(id string) Mix {
+	path := filepath.Join(string(d), "mixes", id)
+	return Mix{
 		Path:     path,
 		InfoFile: InfoFile[StoredMix]{Path: filepath.Join(path, "info.json")},
 	}
 }
 
-type AlbumDir struct {
+type Album struct {
 	Path     string
 	InfoFile InfoFile[StoredAlbum]
 	Cover    Cover
 }
 
-func (d AlbumDir) Track(vol int, id string) AlbumTrack {
+func (d Album) Track(vol int, id string) AlbumTrack {
 	path := filepath.Join(d.Path, strconv.Itoa(vol), id)
 	return AlbumTrack{
 		Path:     path,
@@ -66,12 +72,12 @@ type AlbumTrack struct {
 	InfoFile InfoFile[StoredAlbumVolumeTrack]
 }
 
-type PlaylistDir struct {
+type Playlist struct {
 	Path     string
 	InfoFile InfoFile[StoredPlaylist]
 }
 
-func (d PlaylistDir) Track(id string) PlaylistTrack {
+func (d Playlist) Track(id string) PlaylistTrack {
 	path := filepath.Join(d.Path, id)
 	return PlaylistTrack{
 		Path:     path,
@@ -86,12 +92,12 @@ type PlaylistTrack struct {
 	Cover    Cover
 }
 
-type MixDir struct {
+type Mix struct {
 	Path     string
 	InfoFile InfoFile[StoredMix]
 }
 
-func (d MixDir) Track(id string) MixTrack {
+func (d Mix) Track(id string) MixTrack {
 	path := filepath.Join(d.Path, id)
 	return MixTrack{
 		Path:     path,

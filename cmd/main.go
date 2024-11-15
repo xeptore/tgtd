@@ -42,6 +42,7 @@ import (
 	"github.com/xeptore/tgtd/tgutil"
 	"github.com/xeptore/tgtd/tidal/auth"
 	tidaldl "github.com/xeptore/tgtd/tidal/download"
+	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
 
 const (
@@ -771,7 +772,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 	flawP["job"] = job.flawP()
 	w.currentJob = &job
 
-	const downloadBaseDir = "downloads"
+	downloadBaseDir := tidalfs.From("downloads")
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
