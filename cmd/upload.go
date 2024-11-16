@@ -353,6 +353,12 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 	} else {
 		document = message.UploadedDocument(upload)
 	}
+
+	title := info.Title
+	if nil != info.Version {
+		title += " (" + *info.Version + ")"
+	}
+
 	document.
 		MIME(info.Format.MimeType).
 		Attributes(
