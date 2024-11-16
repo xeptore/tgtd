@@ -141,7 +141,7 @@ func run(cliCtx *cli.Context) (err error) {
 		return fmt.Errorf("failed to read credentials directory: %v", err)
 	} else if errors.Is(err, os.ErrNotExist) {
 		logger.Warn().Msg("Credentials directory does not exist. Creating...")
-		if err := os.MkdirAll(cfg.CredsDir, 0o0755); nil != err {
+		if err := os.MkdirAll(cfg.CredsDir, 0o0700); nil != err {
 			return fmt.Errorf("failed to create download base directory: %v", err)
 		}
 		logger.Info().Msg("Credentials directory created")

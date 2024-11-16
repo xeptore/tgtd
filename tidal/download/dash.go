@@ -70,7 +70,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, accessToken string, fileNa
 		}
 	}
 
-	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
+	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0600)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track file: %v", err)).Append(flawP)
@@ -111,7 +111,7 @@ func (d *DashTrackStream) saveTo(ctx context.Context, accessToken string, fileNa
 }
 
 func writePartToTrackFile(f *os.File, partFileName string) (err error) {
-	fp, err := os.OpenFile(partFileName, os.O_RDONLY, 0o0644)
+	fp, err := os.OpenFile(partFileName, os.O_RDONLY, 0o0600)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return flaw.From(fmt.Errorf("failed to open track part file: %v", err)).Append(flawP)
@@ -145,7 +145,7 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, accessToken, fileNa
 	f, err := os.OpenFile(
 		fileName+".part."+strconv.Itoa(idx),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC,
-		0o644,
+		0o600,
 	)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}

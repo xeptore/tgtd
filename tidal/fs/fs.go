@@ -65,7 +65,7 @@ func (d Album) CreateDir() error {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to remove album directory: %v", err))
 	}
-	if err := os.MkdirAll(d.Path, 0o0755); nil != err {
+	if err := os.MkdirAll(d.Path, 0o0700); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create album directory: %v", err))
 	}
@@ -82,7 +82,7 @@ func (d Album) CreateVolDirs(numVols int) error {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to delete possibly existing album volume directory: %v", err)).Append(flawP)
 		}
-		if err := os.MkdirAll(volDir, 0o0755); nil != err {
+		if err := os.MkdirAll(volDir, 0o0700); nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return flaw.From(fmt.Errorf("failed to create album volume directory: %v", err)).Append(flawP)
 		}
@@ -114,7 +114,7 @@ func (d Playlist) CreateDir() error {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to remove playlist directory: %v", err)).Append(flawP)
 	}
-	if err := os.MkdirAll(d.Path, 0o0755); nil != err {
+	if err := os.MkdirAll(d.Path, 0o0700); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create playlist directory: %v", err)).Append(flawP)
 	}
@@ -147,7 +147,7 @@ func (d Mix) CreateDir() error {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to remove mix directory: %v", err)).Append(flawP)
 	}
-	if err := os.MkdirAll(d.Path, 0o0755); nil != err {
+	if err := os.MkdirAll(d.Path, 0o0700); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create mix directory: %v", err)).Append(flawP)
 	}
@@ -196,7 +196,7 @@ func (d SingleTrack) CreateDir() error {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to remove single directory: %v", err)).Append(flawP)
 	}
-	if err := os.MkdirAll(dir, 0o0755); nil != err {
+	if err := os.MkdirAll(dir, 0o0700); nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create single directory: %v", err)).Append(flawP)
 	}

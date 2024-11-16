@@ -47,7 +47,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileNam
 			partFileName := fileName + ".part." + strconv.Itoa(i)
 			loopFlawP["part_file_name"] = partFileName
 
-			f, err := os.OpenFile(partFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
+			f, err := os.OpenFile(partFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0600)
 			if nil != err {
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 				return flaw.From(fmt.Errorf("failed to create track part file: %v", err)).Append(flawP)
@@ -106,7 +106,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileNam
 		}
 	}
 
-	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0644)
+	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_SYNC|os.O_TRUNC|os.O_WRONLY, 0o0600)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to create track file: %v", err)).Append(flawP)

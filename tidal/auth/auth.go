@@ -66,7 +66,7 @@ func (f File) flawP() flaw.P {
 }
 
 func load(ctx context.Context, tokenFilePath string) (creds *Credentials, err error) {
-	f, err := os.OpenFile(tokenFilePath, os.O_RDONLY, 0o0644)
+	f, err := os.OpenFile(tokenFilePath, os.O_RDONLY, 0o0600)
 	if nil != err {
 		if !errors.Is(err, os.ErrNotExist) {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -137,7 +137,7 @@ func handleUnauthorized(ctx context.Context, rt string, tokenFilePath string) (*
 }
 
 func save(content File, tokenFilePath string) (err error) {
-	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0644)
+	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0600)
 	if nil != err {
 		flawP := flaw.P{
 			"err_debug_tree":  errutil.Tree(err).FlawP(),
