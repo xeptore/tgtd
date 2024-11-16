@@ -756,7 +756,7 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 		}
 		flawP["stream_info"] = flaw.P{"info": info.FlawP()}
 
-		if err := ensureSupportedTrackFormat(info.MimeType, info.Codec); nil != err {
+		if _, err := tidal.InferTrackExt(info.MimeType, info.Codec); nil != err {
 			return nil, nil, flaw.From(err).Append(flawP)
 		}
 		format := tidal.TrackFormat{MimeType: info.MimeType, Codec: info.Codec}
@@ -785,7 +785,7 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 				Append(flawP)
 		}
 
-		if err := ensureSupportedTrackFormat(manifest.MimeType, manifest.Codec); nil != err {
+		if _, err := tidal.InferTrackExt(manifest.MimeType, manifest.Codec); nil != err {
 			return nil, nil, flaw.From(err).Append(flawP)
 		}
 		format := &tidal.TrackFormat{MimeType: manifest.MimeType, Codec: manifest.Codec}
@@ -796,29 +796,6 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 		return &VndTrackStream{URL: manifest.URLs[0]}, format, nil
 	default:
 		return nil, nil, flaw.From(fmt.Errorf("unexpected manifest mime type: %s", mimeType)).Append(flawP)
-	}
-}
-
-type UnsupportedTrackFormatError struct {
-	MimeType string
-	Codec    string
-}
-
-func (e *UnsupportedTrackFormatError) Error() string {
-	return fmt.Sprintf("unsupported track format with mime type %s and codec %s", e.MimeType, e.Codec)
-}
-
-func ensureSupportedTrackFormat(mimeType, codec string) error {
-	switch mimeType {
-	case "audio/mp4":
-		switch strings.ToLower(codec) {
-		case "eac3", "aac", "flac", "alac":
-			return nil
-		default:
-			return &UnsupportedTrackFormatError{MimeType: mimeType, Codec: codec}
-		}
-	default:
-		return &UnsupportedTrackFormatError{MimeType: mimeType, Codec: codec}
 	}
 }
 

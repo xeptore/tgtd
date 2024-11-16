@@ -11,17 +11,32 @@ type TrackFormat struct {
 }
 
 func (f TrackFormat) InferTrackExt() string {
-	switch f.MimeType {
+	ext, err := InferTrackExt(f.MimeType, f.Codec)
+	if nil != err {
+		panic(fmt.Sprintf("unsupported mime type %q", f.MimeType))
+	}
+	return ext
+}
+
+func InferTrackExt(mimeType, codec string) (string, error) {
+	switch mimeType {
 	case "audio/mp4":
-		switch strings.ToLower(f.Codec) {
+		switch strings.ToLower(codec) {
 		case "eac3", "aac", "alac":
-			return "m4a"
+			return "m4a", nil
 		case "flac":
-			return "flac"
+			return "flac", nil
 		default:
-			panic(fmt.Sprintf("unsupported codec %q for audio/mp4 mime type", f.Codec))
+			return "", fmt.Errorf("unsupported codec %q for audio/mp4 mime type", codec)
+		}
+	case "audio/flac":
+		switch strings.ToLower(codec) {
+		case "flac":
+			return "flac", nil
+		default:
+			return "", fmt.Errorf("unsupported codec %q for audio/mp4 mime type", codec)
 		}
 	default:
-		panic(fmt.Sprintf("unsupported mime type %q", f.MimeType))
+		return "", fmt.Errorf("unsupported mime type %q", mimeType)
 	}
 }
