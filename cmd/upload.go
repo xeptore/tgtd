@@ -367,7 +367,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 			},
 			//nolint:exhaustruct
 			&tg.DocumentAttributeAudio{
-				Title:     info.Title,
+				Title:     title,
 				Performer: info.ArtistName,
 				Duration:  info.Duration,
 			},
