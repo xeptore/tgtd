@@ -347,7 +347,7 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 	artists := make([]tidal.TrackArtist, len(respBody.Artists))
 	for i, artist := range respBody.Artists {
 		switch artist.Type {
-		case "MAIN", "FEATURED":
+		case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
 		default:
 			return nil, flaw.From(fmt.Errorf("unexpected artist type: %s", artist.Type)).Append(flawP)
 		}
@@ -1179,7 +1179,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 		artists := make([]tidal.TrackArtist, len(v.Item.Artists))
 		for i, a := range v.Item.Artists {
 			switch a.Type {
-			case "MAIN", "FEATURED":
+			case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
 			default:
 				return nil, 0, flaw.From(fmt.Errorf("unexpected artist type: %s", a.Type)).Append(flawP)
 			}
@@ -1514,7 +1514,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 		artists := make([]tidal.TrackArtist, len(v.Item.Artists))
 		for i, a := range v.Item.Artists {
 			switch a.Type {
-			case "MAIN", "FEATURED":
+			case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
 			default:
 				return nil, 0, flaw.From(fmt.Errorf("unexpected artist type: %s", a.Type)).Append(flawP)
 			}
@@ -1750,7 +1750,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 		artists := make([]tidal.TrackArtist, len(v.Item.Artists))
 		for i, a := range v.Item.Artists {
 			switch a.Type {
-			case "MAIN", "FEATURED":
+			case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
 			default:
 				return nil, 0, flaw.From(fmt.Errorf("unexpected artist type: %s", a.Type)).Append(flawP)
 			}
