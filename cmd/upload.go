@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/styling"
@@ -354,6 +353,12 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 	} else {
 		document = message.UploadedDocument(upload)
 	}
+
+	title := info.Title
+	if nil != info.Version {
+		title += " (" + *info.Version + ")"
+	}
+
 	document.
 		MIME(info.Format.MimeType).
 		Attributes(
@@ -362,7 +367,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 			},
 			//nolint:exhaustruct
 			&tg.DocumentAttributeAudio{
-				Title:     info.Title,
+				Title:     title,
 				Performer: info.ArtistName,
 				Duration:  info.Duration,
 			},
@@ -373,23 +378,9 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 }
 
 func uploadTrackFileName(info TrackUploadInfo) string {
-	ext := inferTrackExt(info.Format)
+	ext := info.Format.InferTrackExt()
 	if nil != info.Version {
 		return fmt.Sprintf("%s - %s (%s).%s", info.ArtistName, info.Title, *info.Version, ext)
 	}
 	return fmt.Sprintf("%s - %s.%s", info.ArtistName, info.Title, ext)
-}
-
-func inferTrackExt(format tidal.TrackFormat) string {
-	switch format.MimeType {
-	case "audio/mp4":
-		switch strings.ToLower(format.Codec) {
-		case "eac3", "aac", "flac", "alac":
-			return "m4a"
-		default:
-			panic(fmt.Sprintf("unsupported codec %q for audio/mp4 mime type", format.Codec))
-		}
-	default:
-		panic(fmt.Sprintf("unsupported mime type %q", format.MimeType))
-	}
 }
