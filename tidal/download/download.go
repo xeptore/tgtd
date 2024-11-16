@@ -1487,6 +1487,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 					Name string `json:"name"`
 				} `json:"artist"`
 				Album struct {
+					ID    int    `json:"id"`
 					Cover string `json:"cover"`
 					Title string `json:"title"`
 				} `json:"album"`
@@ -1511,6 +1512,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 		}
 
 		t := ListTrackMeta{
+			AlbumID:      strconv.Itoa(v.Item.Album.ID),
 			AlbumTitle:   v.Item.Album.Title,
 			Artist:       v.Item.Artist.Name,
 			CoverID:      v.Item.Album.Cover,
