@@ -18,21 +18,26 @@ func (f TrackFormat) InferTrackExt() string {
 	return ext
 }
 
+const (
+	codecFLAC = "flac"
+	extFLAC   = "flac"
+)
+
 func InferTrackExt(mimeType, codec string) (string, error) {
 	switch mimeType {
 	case "audio/mp4":
 		switch strings.ToLower(codec) {
 		case "eac3", "aac", "alac":
 			return "m4a", nil
-		case "flac":
-			return "flac", nil
+		case codec:
+			return extFLAC, nil
 		default:
 			return "", fmt.Errorf("unsupported codec %q for audio/mp4 mime type", codec)
 		}
 	case "audio/flac":
 		switch strings.ToLower(codec) {
-		case "flac":
-			return "flac", nil
+		case codec:
+			return extFLAC, nil
 		default:
 			return "", fmt.Errorf("unsupported codec %q for audio/mp4 mime type", codec)
 		}
