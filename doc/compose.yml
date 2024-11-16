@@ -20,8 +20,8 @@ services:
         target: /home/nonroot/config.yml
         read_only: true
       - type: bind
-        source: ./.certs
-        target: /home/nonroot/.certs
+        source: ./.creds
+        target: /home/nonroot/.creds
         bind:
           propagation: shared
           create_host_path: false
