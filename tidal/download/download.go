@@ -102,7 +102,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 
 	attrs := TrackAttrs{
 		Album:        track.AlbumTitle,
-		Artist:       track.Artist,
+		Artists:      track.Artists,
 		CoverPath:    trackFs.Cover.Path,
 		Format:       *format,
 		Title:        track.Title,
@@ -117,7 +117,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 
 	info := fs.StoredSingleTrack{
 		Track: fs.Track{
-			Artist:   track.Artist,
+			Artists:  track.Artists,
 			Title:    track.Title,
 			Duration: track.Duration,
 			Version:  track.Version,
@@ -139,7 +139,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 
 type TrackAttrs struct {
 	Album        string
-	Artist       string
+	Artists      []tidal.TrackArtist
 	CoverPath    string
 	Format       tidal.TrackFormat
 	Title        string
@@ -154,7 +154,7 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 	trackFilePathWithExt := trackFilePath + "." + ext
 
 	metaTags := []string{
-		"artist=" + attrs.Artist,
+		"artist=" + tidal.JoinArtists(attrs.Artists),
 		"album=" + attrs.Album,
 		"title=" + attrs.Title,
 		"track=" + strconv.Itoa(attrs.TrackNumber),
@@ -327,9 +327,10 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		Title        string `json:"title"`
 		TrackNumber  int    `json:"trackNumber"`
 		VolumeNumber int    `json:"volumeNumber"`
-		Artist       struct {
+		Artists      []struct {
 			Name string `json:"name"`
-		} `json:"artist"`
+			Type string `json:"type"`
+		} `json:"artists"`
 		Album struct {
 			ID      int    `json:"id"`
 			CoverID string `json:"cover"`
@@ -343,10 +344,20 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		return nil, flaw.From(fmt.Errorf("failed to decode track info response body: %v", err)).Append(flawP)
 	}
 
+	artists := make([]tidal.TrackArtist, len(respBody.Artists))
+	for i, artist := range respBody.Artists {
+		switch artist.Type {
+		case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
+		default:
+			return nil, flaw.From(fmt.Errorf("unexpected artist type: %s", artist.Type)).Append(flawP)
+		}
+		artists[i] = tidal.TrackArtist{Name: artist.Name, Type: artist.Type}
+	}
+
 	track := SingleTrackMeta{
 		AlbumID:      strconv.Itoa(respBody.Album.ID),
 		AlbumTitle:   respBody.Album.Title,
-		Artist:       respBody.Artist.Name,
+		Artists:      artists,
 		CoverID:      respBody.Album.CoverID,
 		Duration:     respBody.Duration,
 		Title:        respBody.Title,
@@ -802,7 +813,7 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 type SingleTrackMeta struct {
 	AlbumID      string
 	AlbumTitle   string
-	Artist       string
+	Artists      []tidal.TrackArtist
 	CoverID      string
 	Duration     int
 	Title        string
@@ -812,7 +823,7 @@ type SingleTrackMeta struct {
 }
 
 type AlbumTrackMeta struct {
-	Artist       string
+	Artists      []tidal.TrackArtist
 	Duration     int
 	ID           string
 	Title        string
@@ -824,7 +835,7 @@ type AlbumTrackMeta struct {
 type ListTrackMeta struct {
 	AlbumID      string
 	AlbumTitle   string
-	Artist       string
+	Artists      []tidal.TrackArtist
 	CoverID      string
 	Duration     int
 	ID           string
@@ -880,7 +891,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 
 			attrs := TrackAttrs{
 				Album:        track.AlbumTitle,
-				Artist:       track.Artist,
+				Artists:      track.Artists,
 				CoverPath:    trackFs.Cover.Path,
 				Format:       *format,
 				Title:        track.Title,
@@ -907,7 +918,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 		Tracks: iterutil.Map(tracks, func(i int, v ListTrackMeta) fs.StoredPlaylistTrack {
 			return fs.StoredPlaylistTrack{
 				Track: fs.Track{
-					Artist:   v.Artist,
+					Artists:  v.Artists,
 					Title:    v.Title,
 					Duration: v.Duration,
 					Version:  v.Version,
@@ -1133,9 +1144,10 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
 				Duration     int    `json:"duration"`
-				Artist       struct {
+				Artists      []struct {
 					Name string `json:"name"`
-				} `json:"artist"`
+					Type string `json:"type"`
+				} `json:"artists"`
 				Album struct {
 					ID      int    `json:"id"`
 					CoverID string `json:"cover"`
@@ -1164,10 +1176,20 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 			return nil, 0, flaw.From(errors.New("cut items are not supported")).Append(flawP)
 		}
 
+		artists := make([]tidal.TrackArtist, len(v.Item.Artists))
+		for i, a := range v.Item.Artists {
+			switch a.Type {
+			case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
+			default:
+				return nil, 0, flaw.From(fmt.Errorf("unexpected artist type: %s", a.Type)).Append(flawP)
+			}
+			artists[i] = tidal.TrackArtist{Name: a.Name, Type: a.Type}
+		}
+
 		t := ListTrackMeta{
 			AlbumID:      strconv.Itoa(v.Item.Album.ID),
 			AlbumTitle:   v.Item.Album.Title,
-			Artist:       v.Item.Artist.Name,
+			Artists:      artists,
 			CoverID:      v.Item.Album.CoverID,
 			Duration:     v.Item.Duration,
 			ID:           strconv.Itoa(v.Item.ID),
@@ -1227,7 +1249,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 
 			attrs := TrackAttrs{
 				Album:        track.AlbumTitle,
-				Artist:       track.Artist,
+				Artists:      track.Artists,
 				CoverPath:    trackFs.Cover.Path,
 				Format:       *format,
 				Title:        track.Title,
@@ -1254,7 +1276,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 		Tracks: iterutil.Map(tracks, func(i int, v ListTrackMeta) fs.StoredMixTrack {
 			return fs.StoredMixTrack{
 				Track: fs.Track{
-					Artist:   v.Artist,
+					Artists:  v.Artists,
 					Title:    v.Title,
 					Duration: v.Duration,
 					Version:  v.Version,
@@ -1460,9 +1482,10 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
 				Duration     int    `json:"duration"`
-				Artist       struct {
+				Artists      []struct {
 					Name string `json:"name"`
-				} `json:"artist"`
+					Type string `json:"type"`
+				} `json:"artists"`
 				Album struct {
 					ID    int    `json:"id"`
 					Cover string `json:"cover"`
@@ -1488,10 +1511,20 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 			continue
 		}
 
+		artists := make([]tidal.TrackArtist, len(v.Item.Artists))
+		for i, a := range v.Item.Artists {
+			switch a.Type {
+			case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
+			default:
+				return nil, 0, flaw.From(fmt.Errorf("unexpected artist type: %s", a.Type)).Append(flawP)
+			}
+			artists[i] = tidal.TrackArtist{Name: a.Name, Type: a.Type}
+		}
+
 		t := ListTrackMeta{
 			AlbumID:      strconv.Itoa(v.Item.Album.ID),
 			AlbumTitle:   v.Item.Album.Title,
-			Artist:       v.Item.Artist.Name,
+			Artists:      artists,
 			CoverID:      v.Item.Album.Cover,
 			Duration:     v.Item.Duration,
 			ID:           strconv.Itoa(v.Item.ID),
@@ -1551,7 +1584,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 
 				attrs := TrackAttrs{
 					Album:        album.Title,
-					Artist:       track.Artist,
+					Artists:      track.Artists,
 					CoverPath:    albumFs.Cover.Path,
 					Format:       *format,
 					Title:        track.Title,
@@ -1566,7 +1599,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 
 				volumeTracks[j] = fs.StoredAlbumVolumeTrack{
 					Track: fs.Track{
-						Artist:   track.Artist,
+						Artists:  track.Artists,
 						Title:    track.Title,
 						Duration: track.Duration,
 						Version:  track.Version,
@@ -1686,9 +1719,10 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
 				Duration     int    `json:"duration"`
-				Artist       struct {
+				Artists      []struct {
 					Name string `json:"name"`
-				} `json:"artist"`
+					Type string `json:"type"`
+				} `json:"artists"`
 				Album struct {
 					ID    int    `json:"id"`
 					Cover string `json:"cover"`
@@ -1713,8 +1747,18 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 			continue
 		}
 
+		artists := make([]tidal.TrackArtist, len(v.Item.Artists))
+		for i, a := range v.Item.Artists {
+			switch a.Type {
+			case tidal.ArtistTypeMain, tidal.ArtistTypeFeatured:
+			default:
+				return nil, 0, flaw.From(fmt.Errorf("unexpected artist type: %s", a.Type)).Append(flawP)
+			}
+			artists[i] = tidal.TrackArtist{Name: a.Name, Type: a.Type}
+		}
+
 		t := AlbumTrackMeta{
-			Artist:       v.Item.Artist.Name,
+			Artists:      artists,
 			Duration:     v.Item.Duration,
 			ID:           strconv.Itoa(v.Item.ID),
 			Title:        v.Item.Title,

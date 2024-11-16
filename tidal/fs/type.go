@@ -15,12 +15,12 @@ type TrackWithID struct {
 }
 
 type Track struct {
-	Artist   string            `json:"artist"`
-	Title    string            `json:"title"`
-	Duration int               `json:"duration"`
-	Version  *string           `json:"version"`
-	Format   tidal.TrackFormat `json:"format"`
-	CoverID  string            `json:"cover_id"`
+	Artists  []tidal.TrackArtist `json:"artists"`
+	Title    string              `json:"title"`
+	Duration int                 `json:"duration"`
+	Version  *string             `json:"version"`
+	Format   tidal.TrackFormat   `json:"format"`
+	CoverID  string              `json:"cover_id"`
 }
 
 type StoredSingleTrack struct {
