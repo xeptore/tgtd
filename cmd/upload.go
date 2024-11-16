@@ -52,7 +52,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 				trackFs := albumFs.Track(volNum, track.ID)
 				return TrackUploadInfo{
 					FilePath:   trackFs.Path,
-					ArtistName: track.Artist,
+					ArtistName: tidal.JoinArtists(track.Artists),
 					Title:      track.Title,
 					Version:    track.Version,
 					Duration:   track.Duration,
@@ -96,7 +96,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 			trackFs := playlistFs.Track(track.ID)
 			return TrackUploadInfo{
 				FilePath:   trackFs.Path,
-				ArtistName: track.Artist,
+				ArtistName: tidal.JoinArtists(track.Artists),
 				Title:      track.Title,
 				Version:    track.Version,
 				Duration:   track.Duration,
@@ -139,7 +139,7 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 			trackFs := mixFs.Track(track.ID)
 			return TrackUploadInfo{
 				FilePath:   trackFs.Path,
-				ArtistName: track.Artist,
+				ArtistName: tidal.JoinArtists(track.Artists),
 				Title:      track.Title,
 				Version:    track.Version,
 				Duration:   track.Duration,
@@ -264,7 +264,7 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 	}
 	uploadInfo := TrackUploadInfo{
 		FilePath:   trackFs.Path,
-		ArtistName: info.Artist,
+		ArtistName: tidal.JoinArtists(info.Artists),
 		Title:      info.Title,
 		Version:    info.Version,
 		Duration:   info.Duration,
