@@ -109,6 +109,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 		TrackNumber:  track.TrackNumber,
 		Version:      track.Version,
 		VolumeNumber: track.VolumeNumber,
+		Year:         album.Year,
 	}
 	if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 		return err
@@ -145,6 +146,7 @@ type TrackAttrs struct {
 	TrackNumber  int
 	Version      *string
 	VolumeNumber int
+	Year         int
 }
 
 func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackAttrs) error {
@@ -157,6 +159,7 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 		"title=" + attrs.Title,
 		"track=" + strconv.Itoa(attrs.TrackNumber),
 		"disc=" + strconv.Itoa(attrs.VolumeNumber),
+		"year=" + strconv.Itoa(attrs.Year),
 	}
 	if nil != attrs.Version {
 		metaTags = append(metaTags, "version="+*attrs.Version)
@@ -842,6 +845,7 @@ type AlbumTrackMeta struct {
 }
 
 type ListTrackMeta struct {
+	AlbumID      string
 	AlbumTitle   string
 	Artist       string
 	CoverID      string
@@ -892,6 +896,11 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				return err
 			}
 
+			album, err := d.getAlbumMeta(ctx, track.AlbumID)
+			if nil != err {
+				return err
+			}
+
 			attrs := TrackAttrs{
 				Album:        track.AlbumTitle,
 				Artist:       track.Artist,
@@ -901,6 +910,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				TrackNumber:  track.TrackNumber,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
+				Year:         album.Year,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1178,6 +1188,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 		}
 
 		t := ListTrackMeta{
+			AlbumID:      strconv.Itoa(v.Item.Album.ID),
 			AlbumTitle:   v.Item.Album.Title,
 			Artist:       v.Item.Artist.Name,
 			CoverID:      v.Item.Album.CoverID,
@@ -1232,6 +1243,11 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				return err
 			}
 
+			album, err := d.getAlbumMeta(ctx, track.AlbumID)
+			if nil != err {
+				return err
+			}
+
 			attrs := TrackAttrs{
 				Album:        track.AlbumTitle,
 				Artist:       track.Artist,
@@ -1241,6 +1257,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				TrackNumber:  track.TrackNumber,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
+				Year:         album.Year,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1562,6 +1579,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					TrackNumber:  track.TrackNumber,
 					Version:      track.Version,
 					VolumeNumber: track.VolumeNumber,
+					Year:         album.Year,
 				}
 				if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 					return err
