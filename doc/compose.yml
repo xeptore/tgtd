@@ -19,14 +19,18 @@ services:
         source: ./config.yml
         target: /home/nonroot/config.yml
         read_only: true
-      - type: tmpfs
+      - type: bind
+        source: ./.certs
         target: /home/nonroot/.certs
-        tmpfs:
-          size: 10m
-          mode: 755
+        bind:
+          propagation: shared
+          create_host_path: false
     env_file:
-      - .bot.env
+      - .env
 networks:
   tgtd:
     name: tgtd
     driver: bridge
+volumes:
+  default:
+    name: tgtd
