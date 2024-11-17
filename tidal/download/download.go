@@ -598,7 +598,9 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMe
 		return nil, err
 	}
 	var respBody struct {
-		Artist      string `json:"artist"`
+		Artist struct {
+			Name string `json:"name"`
+		} `json:"artist"`
 		Title       string `json:"title"`
 		ReleaseDate string `json:"releaseDate"`
 		CoverID     string `json:"cover"`
@@ -616,7 +618,7 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMe
 	}
 
 	return &tidal.AlbumMeta{
-		Artist:      respBody.Artist,
+		Artist:      respBody.Artist.Name,
 		Title:       respBody.Title,
 		ReleaseDate: releaseDate,
 		CoverID:     respBody.CoverID,
