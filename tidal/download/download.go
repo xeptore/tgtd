@@ -1167,6 +1167,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 			Cut  any    `json:"any"`
 			Item struct {
 				ID           int    `json:"id"`
+				StreamReady  bool   `json:"streamReady"`
 				TrackNumber  int    `json:"trackNumber"`
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
@@ -1198,7 +1199,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 	}
 
 	for _, v := range respBody.Items {
-		if v.Type != pageItemTypeTrack {
+		if v.Type != pageItemTypeTrack || !v.Item.StreamReady {
 			continue
 		}
 		if v.Cut != nil {
@@ -1512,6 +1513,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 			Type string `json:"type"`
 			Item struct {
 				ID           int    `json:"id"`
+				StreamReady  bool   `json:"streamReady"`
 				TrackNumber  int    `json:"trackNumber"`
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
@@ -1543,7 +1545,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 	}
 
 	for _, v := range responseBody.Items {
-		if v.Type != pageItemTypeTrack {
+		if v.Type != pageItemTypeTrack || !v.Item.StreamReady {
 			continue
 		}
 
@@ -1756,6 +1758,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 			Type string `json:"type"`
 			Item struct {
 				ID           int    `json:"id"`
+				StreamReady  bool   `json:"streamReady"`
 				TrackNumber  int    `json:"trackNumber"`
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
@@ -1789,7 +1792,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 	}
 
 	for _, v := range respBody.Items {
-		if v.Type != pageItemTypeTrack {
+		if v.Type != pageItemTypeTrack || !v.Item.StreamReady {
 			continue
 		}
 
