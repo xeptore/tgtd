@@ -30,8 +30,8 @@ type StoredSingleTrack struct {
 }
 
 type StoredSingleTrackAlbum struct {
-	Title string `json:"title"`
-	Year  int    `json:"year"`
+	Title       string `json:"title"`
+	ReleaseDate string `json:"release_date"`
 }
 
 type StoredPlaylist struct {

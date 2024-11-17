@@ -260,7 +260,7 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 	caption := []styling.StyledTextOption{
 		styling.Plain(info.Album.Title),
 		styling.Plain(" "),
-		styling.Plain(fmt.Sprintf("(%d)", info.Album.Year)),
+		styling.Plain(fmt.Sprintf("(%s)", info.Album.ReleaseDate)),
 	}
 	uploadInfo := TrackUploadInfo{
 		FilePath:   trackFs.Path,
