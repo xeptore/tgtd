@@ -26,6 +26,10 @@ func JoinArtists(artists []TrackArtist) string {
 	return out
 }
 
+func JoinNames(names []string) string {
+	return strings.Join(names, ", ")
+}
+
 type TrackCredits struct {
 	Producers           []string
 	Composers           []string
