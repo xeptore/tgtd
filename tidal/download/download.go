@@ -521,8 +521,10 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		VolumeNumber int    `json:"volumeNumber"`
 		Copyright    string `json:"copyright"`
 		ISRC         string `json:"isrc"`
-		Artist       string `json:"artist"`
-		Artists      []struct {
+		Artist       struct {
+			Name string `json:"name"`
+		} `json:"artist"`
+		Artists []struct {
 			Name string `json:"name"`
 			Type string `json:"type"`
 		} `json:"artists"`
@@ -550,7 +552,7 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 	}
 
 	track := SingleTrackMeta{
-		Artist:       respBody.Artist,
+		Artist:       respBody.Artist.Name,
 		AlbumID:      strconv.Itoa(respBody.Album.ID),
 		AlbumTitle:   respBody.Album.Title,
 		Artists:      artists,
@@ -1369,8 +1371,10 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 				ISRC         string `json:"isrc"`
 				Copyright    string `json:"copyright"`
 				Duration     int    `json:"duration"`
-				Artist       string `json:"artist"`
-				Artists      []struct {
+				Artist       struct {
+					Name string `json:"name"`
+				} `json:"artist"`
+				Artists []struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
 				} `json:"artists"`
@@ -1386,7 +1390,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 	if err := json.Unmarshal(respBytes, &respBody); nil != err {
 		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
+		return nil, 0, flaw.From(fmt.Errorf("failed to decode playlist response: %v", err)).Append(flawP)
 	}
 
 	thisPageItemsCount := len(respBody.Items)
@@ -1417,7 +1421,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 			AlbumTitle:   v.Item.Album.Title,
 			ISRC:         v.Item.ISRC,
 			Copyright:    v.Item.Copyright,
-			Artist:       v.Item.Artist,
+			Artist:       v.Item.Artist.Name,
 			Artists:      artists,
 			CoverID:      v.Item.Album.CoverID,
 			Duration:     v.Item.Duration,
@@ -1724,8 +1728,10 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 				Copyright    string `json:"copyright"`
 				ISRC         string `json:"isrc"`
 				Duration     int    `json:"duration"`
-				Artist       string `json:"artist"`
-				Artists      []struct {
+				Artist       struct {
+					Name string `json:"name"`
+				} `json:"artist"`
+				Artists []struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
 				} `json:"artists"`
@@ -1769,7 +1775,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 			AlbumTitle:   v.Item.Album.Title,
 			ISRC:         v.Item.ISRC,
 			Copyright:    v.Item.Copyright,
-			Artist:       v.Item.Artist,
+			Artist:       v.Item.Artist.Name,
 			Artists:      artists,
 			CoverID:      v.Item.Album.Cover,
 			Duration:     v.Item.Duration,
