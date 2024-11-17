@@ -14,12 +14,14 @@ var (
 	DefaultDownloadedCoverTTL = 1 * time.Hour
 	DefaultAlbumTTL           = 1 * time.Hour
 	DefaultUploadedCoverTTL   = 1 * time.Hour
+	DefaultTrackCreditsTTL    = 1 * time.Hour
 )
 
 type Cache struct {
 	AlbumsMeta       AlbumsMetaCache
 	DownloadedCovers DownloadedCoversCache
 	UploadedCovers   UploadedCoversCache
+	TrackCredits     TrackCreditsCache
 }
 
 func New() *Cache {
@@ -44,6 +46,13 @@ func New() *Cache {
 			ItemsToPrune(1),
 	)
 
+	trackCreditsCache := ccache.New(
+		ccache.Configure[*tidal.TrackCredits]().
+			MaxSize(10_000).
+			GetsPerPromote(3).
+			ItemsToPrune(1),
+	)
+
 	return &Cache{
 		AlbumsMeta: AlbumsMetaCache{
 			c:   albumsMetaCache,
@@ -55,6 +64,10 @@ func New() *Cache {
 		},
 		UploadedCovers: UploadedCoversCache{
 			c:   uploadedCoversCache,
+			mux: sync.Mutex{},
+		},
+		TrackCredits: TrackCreditsCache{
+			c:   trackCreditsCache,
 			mux: sync.Mutex{},
 		},
 	}
@@ -91,4 +104,19 @@ func (c *AlbumsMetaCache) Fetch(k string, ttl time.Duration, fetch func() (*tida
 	c.mux.Lock()
 	defer c.mux.Unlock()
 	return c.c.Fetch(k, ttl, fetch)
+}
+
+type TrackCreditsCache struct {
+	c   *ccache.Cache[*tidal.TrackCredits]
+	mux sync.Mutex
+}
+
+func (c *TrackCreditsCache) Fetch(k string, ttl time.Duration, fetch func() (*tidal.TrackCredits, error)) (*ccache.Item[*tidal.TrackCredits], error) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	return c.c.Fetch(k, ttl, fetch)
+}
+
+func (c *TrackCreditsCache) Set(k string, v *tidal.TrackCredits, ttl time.Duration) {
+	c.c.Set(k, v, ttl)
 }

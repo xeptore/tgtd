@@ -19,9 +19,20 @@ const (
 func JoinArtists(artists []TrackArtist) string {
 	mainArtists := lo.FilterMap(artists, func(a TrackArtist, _ int) (string, bool) { return a.Name, a.Type == ArtistTypeMain })
 	featArtists := lo.FilterMap(artists, func(a TrackArtist, _ int) (string, bool) { return a.Name, a.Type == ArtistTypeFeatured })
-	out := strings.Join(mainArtists, " & ")
+	out := strings.Join(mainArtists, ", ")
 	if len(featArtists) > 0 {
-		out += " (feat. " + strings.Join(featArtists, " & ") + ")"
+		out += " (feat. " + strings.Join(featArtists, ", ") + ")"
 	}
 	return out
+}
+
+func JoinNames(names []string) string {
+	return strings.Join(names, ", ")
+}
+
+type TrackCredits struct {
+	Producers           []string
+	Composers           []string
+	Lyricists           []string
+	AdditionalProducers []string
 }
