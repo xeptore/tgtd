@@ -1,7 +1,12 @@
 package tidal
 
+import (
+	"time"
+)
+
 type AlbumMeta struct {
-	Title   string
-	Year    int
-	CoverID string
+	Artist      string
+	Title       string
+	ReleaseDate time.Time
+	CoverID     string
 }

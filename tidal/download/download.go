@@ -100,16 +100,19 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 		return err
 	}
 
-	attrs := TrackAttrs{
+	attrs := TrackEmbeddedAttrs{
 		Album:        track.AlbumTitle,
+		AlbumArtist:  album.Artist,
 		Artists:      track.Artists,
+		Copyright:    track.Copyright,
 		CoverPath:    trackFs.Cover.Path,
 		Format:       *format,
+		ISRC:         track.ISRC,
+		ReleaseDate:  album.ReleaseDate,
 		Title:        track.Title,
 		TrackNumber:  track.TrackNumber,
 		Version:      track.Version,
 		VolumeNumber: track.VolumeNumber,
-		Year:         album.Year,
 	}
 	if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 		return err
@@ -125,10 +128,10 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 			CoverID:  track.CoverID,
 		},
 		Album: fs.StoredSingleTrackAlbum{
-			Title: album.Title,
-			Year:  album.Year,
+			Title:       album.Title,
+			ReleaseDate: album.ReleaseDate.Format(time.DateOnly),
 		},
-		Caption: fmt.Sprintf("%s (%d)", album.Title, album.Year),
+		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(time.DateOnly)),
 	}
 	if err := trackFs.InfoFile.Write(info); nil != err {
 		return err
@@ -137,29 +140,36 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 	return nil
 }
 
-type TrackAttrs struct {
+type TrackEmbeddedAttrs struct {
 	Album        string
+	AlbumArtist  string
 	Artists      []tidal.TrackArtist
+	Copyright    string
 	CoverPath    string
 	Format       tidal.TrackFormat
+	ISRC         string
+	ReleaseDate  time.Time
 	Title        string
 	TrackNumber  int
 	Version      *string
 	VolumeNumber int
-	Year         int
 }
 
-func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackAttrs) error {
+func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackEmbeddedAttrs) error {
 	ext := attrs.Format.InferTrackExt()
 	trackFilePathWithExt := trackFilePath + "." + ext
 
 	metaTags := []string{
-		"artist=" + tidal.JoinArtists(attrs.Artists),
-		"album=" + attrs.Album,
-		"title=" + attrs.Title,
-		"track=" + strconv.Itoa(attrs.TrackNumber),
-		"disc=" + strconv.Itoa(attrs.VolumeNumber),
-		"year=" + strconv.Itoa(attrs.Year),
+		"ARTIST=" + tidal.JoinArtists(attrs.Artists),
+		"TITLE=" + attrs.Title,
+		"ALBUM=" + attrs.Album,
+		"ALBUMARTIST=" + attrs.AlbumArtist,
+		"COPYRIGHT=" + attrs.Copyright,
+		"ISRC=" + attrs.ISRC,
+		"TRACKNUMBER=" + strconv.Itoa(attrs.TrackNumber),
+		"DISCNUMBER=" + strconv.Itoa(attrs.VolumeNumber),
+		"DATE=" + attrs.ReleaseDate.Format(time.DateOnly),
+		"YEAR=" + strconv.Itoa(attrs.ReleaseDate.Year()),
 	}
 	if nil != attrs.Version {
 		metaTags = append(metaTags, "version="+*attrs.Version)
@@ -327,6 +337,8 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		Title        string `json:"title"`
 		TrackNumber  int    `json:"trackNumber"`
 		VolumeNumber int    `json:"volumeNumber"`
+		Copyright    string `json:"copyright"`
+		ISRC         string `json:"isrc"`
 		Artists      []struct {
 			Name string `json:"name"`
 			Type string `json:"type"`
@@ -358,6 +370,8 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		AlbumID:      strconv.Itoa(respBody.Album.ID),
 		AlbumTitle:   respBody.Album.Title,
 		Artists:      artists,
+		ISRC:         respBody.ISRC,
+		Copyright:    respBody.Copyright,
 		CoverID:      respBody.Album.CoverID,
 		Duration:     respBody.Duration,
 		Title:        respBody.Title,
@@ -584,6 +598,7 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMe
 		return nil, err
 	}
 	var respBody struct {
+		Artist      string `json:"artist"`
 		Title       string `json:"title"`
 		ReleaseDate string `json:"releaseDate"`
 		CoverID     string `json:"cover"`
@@ -601,9 +616,10 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMe
 	}
 
 	return &tidal.AlbumMeta{
-		Title:   respBody.Title,
-		Year:    releaseDate.Year(),
-		CoverID: respBody.CoverID,
+		Artist:      respBody.Artist,
+		Title:       respBody.Title,
+		ReleaseDate: releaseDate,
+		CoverID:     respBody.CoverID,
 	}, nil
 }
 
@@ -814,6 +830,8 @@ type SingleTrackMeta struct {
 	AlbumID      string
 	AlbumTitle   string
 	Artists      []tidal.TrackArtist
+	ISRC         string
+	Copyright    string
 	CoverID      string
 	Duration     int
 	Title        string
@@ -827,6 +845,8 @@ type AlbumTrackMeta struct {
 	Duration     int
 	ID           string
 	Title        string
+	Copyright    string
+	ISRC         string
 	TrackNumber  int
 	Version      *string
 	VolumeNumber int
@@ -835,6 +855,8 @@ type AlbumTrackMeta struct {
 type ListTrackMeta struct {
 	AlbumID      string
 	AlbumTitle   string
+	ISRC         string
+	Copyright    string
 	Artists      []tidal.TrackArtist
 	CoverID      string
 	Duration     int
@@ -889,16 +911,19 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				return err
 			}
 
-			attrs := TrackAttrs{
+			attrs := TrackEmbeddedAttrs{
 				Album:        track.AlbumTitle,
+				AlbumArtist:  album.Artist,
 				Artists:      track.Artists,
+				Copyright:    track.Copyright,
 				CoverPath:    trackFs.Cover.Path,
 				Format:       *format,
+				ISRC:         track.ISRC,
+				ReleaseDate:  album.ReleaseDate,
 				Title:        track.Title,
 				TrackNumber:  track.TrackNumber,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
-				Year:         album.Year,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1143,6 +1168,8 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 				TrackNumber  int    `json:"trackNumber"`
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
+				ISRC         string `json:"isrc"`
+				Copyright    string `json:"copyright"`
 				Duration     int    `json:"duration"`
 				Artists      []struct {
 					Name string `json:"name"`
@@ -1189,6 +1216,8 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 		t := ListTrackMeta{
 			AlbumID:      strconv.Itoa(v.Item.Album.ID),
 			AlbumTitle:   v.Item.Album.Title,
+			ISRC:         v.Item.ISRC,
+			Copyright:    v.Item.Copyright,
 			Artists:      artists,
 			CoverID:      v.Item.Album.CoverID,
 			Duration:     v.Item.Duration,
@@ -1247,16 +1276,19 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				return err
 			}
 
-			attrs := TrackAttrs{
+			attrs := TrackEmbeddedAttrs{
 				Album:        track.AlbumTitle,
+				AlbumArtist:  album.Artist,
 				Artists:      track.Artists,
+				Copyright:    track.Copyright,
 				CoverPath:    trackFs.Cover.Path,
 				Format:       *format,
+				ISRC:         track.ISRC,
+				ReleaseDate:  album.ReleaseDate,
 				Title:        track.Title,
 				TrackNumber:  track.TrackNumber,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
-				Year:         album.Year,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1481,6 +1513,8 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 				TrackNumber  int    `json:"trackNumber"`
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
+				Copyright    string `json:"copyright"`
+				ISRC         string `json:"isrc"`
 				Duration     int    `json:"duration"`
 				Artists      []struct {
 					Name string `json:"name"`
@@ -1524,6 +1558,8 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 		t := ListTrackMeta{
 			AlbumID:      strconv.Itoa(v.Item.Album.ID),
 			AlbumTitle:   v.Item.Album.Title,
+			ISRC:         v.Item.ISRC,
+			Copyright:    v.Item.Copyright,
 			Artists:      artists,
 			CoverID:      v.Item.Album.Cover,
 			Duration:     v.Item.Duration,
@@ -1582,16 +1618,19 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					return err
 				}
 
-				attrs := TrackAttrs{
+				attrs := TrackEmbeddedAttrs{
 					Album:        album.Title,
+					AlbumArtist:  album.Artist,
 					Artists:      track.Artists,
+					Copyright:    track.Copyright,
 					CoverPath:    albumFs.Cover.Path,
 					Format:       *format,
+					ISRC:         track.ISRC,
+					ReleaseDate:  album.ReleaseDate,
 					Title:        track.Title,
 					TrackNumber:  track.TrackNumber,
 					Version:      track.Version,
 					VolumeNumber: track.VolumeNumber,
-					Year:         album.Year,
 				}
 				if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 					return err
@@ -1619,7 +1658,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	}
 
 	info := fs.StoredAlbum{
-		Caption: fmt.Sprintf("%s (%d)", album.Title, album.Year),
+		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(time.DateOnly)),
 		Volumes: albumVolumes,
 	}
 	if err := albumFs.InfoFile.Write(info); nil != err {
@@ -1718,7 +1757,10 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 				TrackNumber  int    `json:"trackNumber"`
 				VolumeNumber int    `json:"volumeNumber"`
 				Title        string `json:"title"`
+				Copyright    string `json:"copyright"`
+				ISRC         string `json:"isrc"`
 				Duration     int    `json:"duration"`
+				Artist       string `json:"artist"`
 				Artists      []struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
@@ -1762,6 +1804,8 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 			Duration:     v.Item.Duration,
 			ID:           strconv.Itoa(v.Item.ID),
 			Title:        v.Item.Title,
+			Copyright:    v.Item.Copyright,
+			ISRC:         v.Item.ISRC,
 			TrackNumber:  v.Item.TrackNumber,
 			Version:      v.Item.Version,
 			VolumeNumber: v.Item.VolumeNumber,
