@@ -276,7 +276,7 @@ type TrackCreditsResponse []struct {
 	Type         string `json:"type"`
 	Contributors []struct {
 		Name string `json:"name"`
-		ID   string `json:"id"`
+		ID   int    `json:"id"`
 	} `json:"contributors"`
 }
 
