@@ -781,6 +781,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		w.tidalAuth.Creds.AccessToken,
 		&w.cache.AlbumsMeta,
 		&w.cache.DownloadedCovers,
+		&w.cache.TrackCredits,
 	)
 
 	switch kind {

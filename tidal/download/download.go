@@ -24,6 +24,7 @@ import (
 	"github.com/xeptore/tgtd/httputil"
 	"github.com/xeptore/tgtd/iterutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
 	"github.com/xeptore/tgtd/tidal"
 	"github.com/xeptore/tgtd/tidal/auth"
@@ -32,18 +33,19 @@ import (
 )
 
 const (
-	trackAPIFormat         = "https://api.tidal.com/v1/tracks/%s"
-	albumAPIFormat         = "https://api.tidal.com/v1/albums/%s"
-	playlistAPIFormat      = "https://api.tidal.com/v1/playlists/%s"
-	mixInfoURL             = "https://listen.tidal.com/v1/pages/mix"
-	trackStreamAPIFormat   = "https://api.tidal.com/v1/tracks/%s/playbackinfo"
-	albumItemsAPIFormat    = "https://api.tidal.com/v1/albums/%s/items"
-	playlistItemsAPIFormat = "https://api.tidal.com/v1/playlists/%s/items"
-	mixItemsAPIFormat      = "https://api.tidal.com/v1/mixes/%s/items"
-	coverURLFormat         = "https://resources.tidal.com/images/%s/1280x1280.jpg"
-	pageSize               = 100
-	maxBatchParts          = 10
-	singlePartChunkSize    = 1024 * 1024
+	trackAPIFormat             = "https://api.tidal.com/v1/tracks/%s"
+	trackCreditsAPIFormat      = "https://api.tidal.com/v1/tracks/%s/credits" //nolint:gosec
+	albumAPIFormat             = "https://api.tidal.com/v1/albums/%s"
+	playlistAPIFormat          = "https://api.tidal.com/v1/playlists/%s"
+	mixInfoURL                 = "https://listen.tidal.com/v1/pages/mix"
+	trackStreamAPIFormat       = "https://api.tidal.com/v1/tracks/%s/playbackinfo"
+	albumItemsCreditsAPIFormat = "https://api.tidal.com/v1/albums/%s/items/credits" //nolint:gosec
+	playlistItemsAPIFormat     = "https://api.tidal.com/v1/playlists/%s/items"
+	mixItemsAPIFormat          = "https://api.tidal.com/v1/mixes/%s/items"
+	coverURLFormat             = "https://resources.tidal.com/images/%s/1280x1280.jpg"
+	pageSize                   = 100
+	maxBatchParts              = 10
+	singlePartChunkSize        = 1024 * 1024
 )
 
 var ErrTooManyRequests = errors.New("too many requests")
@@ -53,6 +55,7 @@ type Downloader struct {
 	accessToken           string
 	albumsMetaCache       *cache.AlbumsMetaCache
 	downloadedCoversCache *cache.DownloadedCoversCache
+	trackCreditsCache     *cache.TrackCreditsCache
 }
 
 func NewDownloader(
@@ -60,12 +63,14 @@ func NewDownloader(
 	accessToken string,
 	albumsMetaCache *cache.AlbumsMetaCache,
 	downloadedCoversCache *cache.DownloadedCoversCache,
+	trackCreditsCache *cache.TrackCreditsCache,
 ) *Downloader {
 	return &Downloader{
 		dir:                   dir,
 		accessToken:           accessToken,
 		albumsMetaCache:       albumsMetaCache,
 		downloadedCoversCache: downloadedCoversCache,
+		trackCreditsCache:     trackCreditsCache,
 	}
 }
 
@@ -76,6 +81,11 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 	}
 
 	coverBytes, err := d.getCover(ctx, track.CoverID)
+	if nil != err {
+		return err
+	}
+
+	trackCredits, err := d.getTrackCredits(ctx, id)
 	if nil != err {
 		return err
 	}
@@ -101,6 +111,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 	}
 
 	attrs := TrackEmbeddedAttrs{
+		LeadArtist:   track.Artist,
 		Album:        track.AlbumTitle,
 		AlbumArtist:  album.Artist,
 		Artists:      track.Artists,
@@ -113,6 +124,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 		TrackNumber:  track.TrackNumber,
 		Version:      track.Version,
 		VolumeNumber: track.VolumeNumber,
+		Credits:      *trackCredits,
 	}
 	if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 		return err
@@ -140,7 +152,161 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 	return nil
 }
 
+func (d *Downloader) getTrackCredits(ctx context.Context, id string) (*tidal.TrackCredits, error) {
+	cachedTrackCredits, err := d.trackCreditsCache.Fetch(
+		id,
+		cache.DefaultTrackCreditsTTL,
+		func() (*tidal.TrackCredits, error) { return fetchTrackCredits(ctx, d.accessToken, id) },
+	)
+	if nil != err {
+		return nil, err
+	}
+	return cachedTrackCredits.Value(), nil
+}
+
+func fetchTrackCredits(ctx context.Context, accessToken string, id string) (*tidal.TrackCredits, error) {
+	reqURL, err := url.Parse(fmt.Sprintf(trackCreditsAPIFormat, id))
+	if nil != err {
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return nil, flaw.From(fmt.Errorf("failed to parse track credits URL: %v", err)).Append(flawP)
+	}
+
+	reqParams := make(url.Values, 2)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("includeContributors", "true")
+	reqURL.RawQuery = reqParams.Encode()
+	flawP := flaw.P{"encoded_query_params": reqURL.RawQuery}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+	if nil != err {
+		if errutil.IsContext(ctx) {
+			return nil, ctx.Err()
+		}
+
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to create get track credits request: %v", err)).Append(flawP)
+	}
+	req.Header.Add("Authorization", "Bearer "+accessToken)
+
+	client := http.Client{Timeout: config.GetPageTracksRequestTimeout} //nolint:exhaustruct
+	resp, err := client.Do(req)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return nil, ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return nil, flaw.From(fmt.Errorf("failed to send get track credits request: %v", err)).Append(flawP)
+		}
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close get track credits response body: %v", closeErr)).Append(flawP)
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
+
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return nil, ErrTooManyRequests
+	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
+			return nil, must.BeFlaw(err)
+		} else if ok {
+			return nil, ErrTooManyRequests
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("unexpected 403 response")).Append(flawP)
+	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
+	}
+
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return nil, err
+	}
+
+	var respBody TrackCreditsResponse
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
+		flawP["response_body"] = string(respBytes)
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return nil, flaw.From(fmt.Errorf("failed to decode track credits response: %v", err)).Append(flawP)
+	}
+
+	return ptr.Of(respBody.toTrackCredits()), nil
+}
+
+type TrackCreditsResponse []struct {
+	Type         string `json:"type"`
+	Contributors []struct {
+		Name string `json:"name"`
+		ID   string `json:"id"`
+	} `json:"contributors"`
+}
+
+func (t TrackCreditsResponse) toTrackCredits() tidal.TrackCredits {
+	var out tidal.TrackCredits
+	for _, v := range t {
+		switch v.Type {
+		case "Producer":
+			for _, v := range v.Contributors {
+				out.Producers = append(out.Producers, v.Name)
+			}
+		case "Composer":
+			for _, v := range v.Contributors {
+				out.Composers = append(out.Composers, v.Name)
+			}
+		case "Lyricist":
+			for _, v := range v.Contributors {
+				out.Lyricists = append(out.Lyricists, v.Name)
+			}
+		case "Additional Producer":
+			for _, v := range v.Contributors {
+				out.AdditionalProducers = append(out.AdditionalProducers, v.Name)
+			}
+		}
+	}
+	return out
+}
+
 type TrackEmbeddedAttrs struct {
+	LeadArtist   string
 	Album        string
 	AlbumArtist  string
 	Artists      []tidal.TrackArtist
@@ -153,6 +319,7 @@ type TrackEmbeddedAttrs struct {
 	TrackNumber  int
 	Version      *string
 	VolumeNumber int
+	Credits      tidal.TrackCredits
 }
 
 func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackEmbeddedAttrs) error {
@@ -160,7 +327,7 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 	trackFilePathWithExt := trackFilePath + "." + ext
 
 	metaTags := []string{
-		"ARTIST=" + tidal.JoinArtists(attrs.Artists),
+		"LEAD_PERFORMER=" + attrs.LeadArtist,
 		"TITLE=" + attrs.Title,
 		"ALBUM=" + attrs.Album,
 		"ALBUMARTIST=" + attrs.AlbumArtist,
@@ -171,8 +338,29 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 		"DATE=" + attrs.ReleaseDate.Format(time.DateOnly),
 		"YEAR=" + strconv.Itoa(attrs.ReleaseDate.Year()),
 	}
+	for _, artist := range attrs.Artists {
+		metaTags = append(metaTags, "ARTIST="+artist.Name)
+	}
+	for _, composer := range attrs.Credits.Composers {
+		metaTags = append(metaTags, "COMPOSER="+composer)
+	}
+	for _, lyricist := range attrs.Credits.Lyricists {
+		metaTags = append(metaTags, "LYRICIST="+lyricist)
+	}
+	for _, producer := range attrs.Credits.Producers {
+		metaTags = append(metaTags, "PRODUCER="+producer)
+	}
+	for _, additionalProducer := range attrs.Credits.AdditionalProducers {
+		metaTags = append(metaTags, "COPRODUCER="+additionalProducer)
+	}
+
 	if nil != attrs.Version {
 		metaTags = append(metaTags, "version="+*attrs.Version)
+	}
+
+	metaArgs := make([]string, 0, len(metaTags)*2)
+	for _, tag := range metaTags {
+		metaArgs = append(metaArgs, "-metadata", "+"+tag)
 	}
 
 	args := []string{
@@ -189,12 +377,6 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 		"-disposition:v",
 		"attached_pic",
 	}
-
-	metaArgs := make([]string, 0, len(metaTags)*2)
-	for _, tag := range metaTags {
-		metaArgs = append(metaArgs, "-metadata", tag)
-	}
-
 	args = append(args, metaArgs...)
 	args = append(args, trackFilePathWithExt)
 
@@ -287,17 +469,17 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		if nil != err {
 			return nil, err
 		}
-		var responseBody struct {
+		var respBody struct {
 			Status      int    `json:"status"`
 			SubStatus   int    `json:"subStatus"`
 			UserMessage string `json:"userMessage"`
 		}
-		if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+		if err := json.Unmarshal(respBytes, &respBody); nil != err {
 			flawP["response_body"] = string(respBytes)
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
 		}
-		if responseBody.Status == 401 && responseBody.SubStatus == 11002 && responseBody.UserMessage == "Token could not be verified" {
+		if respBody.Status == 401 && respBody.SubStatus == 11002 && respBody.UserMessage == "Token could not be verified" {
 			return nil, auth.ErrUnauthorized
 		}
 
@@ -339,6 +521,7 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 		VolumeNumber int    `json:"volumeNumber"`
 		Copyright    string `json:"copyright"`
 		ISRC         string `json:"isrc"`
+		Artist       string `json:"artist"`
 		Artists      []struct {
 			Name string `json:"name"`
 			Type string `json:"type"`
@@ -367,6 +550,7 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTra
 	}
 
 	track := SingleTrackMeta{
+		Artist:       respBody.Artist,
 		AlbumID:      strconv.Itoa(respBody.Album.ID),
 		AlbumTitle:   respBody.Album.Title,
 		Artists:      artists,
@@ -764,20 +948,20 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 	if nil != err {
 		return nil, nil, err
 	}
-	var responseBody struct {
+	var respBody struct {
 		ManifestMimeType string `json:"manifestMimeType"`
 		Manifest         string `json:"manifest"`
 	}
-	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
 		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, nil, flaw.From(fmt.Errorf("failed to decode track stream response body: %v", err)).Append(flawP)
 	}
-	flawP["stream"] = flaw.P{"manifest_mime_type": responseBody.ManifestMimeType}
+	flawP["stream"] = flaw.P{"manifest_mime_type": respBody.ManifestMimeType}
 
-	switch mimeType := responseBody.ManifestMimeType; mimeType {
+	switch mimeType := respBody.ManifestMimeType; mimeType {
 	case "application/dash+xml", "dash+xml":
-		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(responseBody.Manifest))
+		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(respBody.Manifest))
 		info, err := mpd.ParseStreamInfo(dec)
 		if nil != err {
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -793,7 +977,7 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 		return &DashTrackStream{Info: *info}, &format, nil
 	case "application/vnd.tidal.bts", "vnd.tidal.bt":
 		var manifest VNDManifest
-		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(responseBody.Manifest))
+		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(respBody.Manifest))
 		if err := json.NewDecoder(dec).Decode(&manifest); nil != err {
 			flawP["manifest"] = manifest.FlawP()
 			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
@@ -829,6 +1013,7 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 }
 
 type SingleTrackMeta struct {
+	Artist       string
 	AlbumID      string
 	AlbumTitle   string
 	Artists      []tidal.TrackArtist
@@ -843,6 +1028,7 @@ type SingleTrackMeta struct {
 }
 
 type AlbumTrackMeta struct {
+	Artist       string
 	Artists      []tidal.TrackArtist
 	Duration     int
 	ID           string
@@ -852,6 +1038,7 @@ type AlbumTrackMeta struct {
 	TrackNumber  int
 	Version      *string
 	VolumeNumber int
+	Credits      tidal.TrackCredits
 }
 
 type ListTrackMeta struct {
@@ -859,6 +1046,7 @@ type ListTrackMeta struct {
 	AlbumTitle   string
 	ISRC         string
 	Copyright    string
+	Artist       string
 	Artists      []tidal.TrackArtist
 	CoverID      string
 	Duration     int
@@ -898,6 +1086,11 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				return err
 			}
 
+			trackCredits, err := d.getTrackCredits(ctx, track.ID)
+			if nil != err {
+				return err
+			}
+
 			trackFs := playlistFs.Track(track.ID)
 			if err := trackFs.Cover.Write(coverBytes); nil != err {
 				return err
@@ -914,6 +1107,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 			}
 
 			attrs := TrackEmbeddedAttrs{
+				LeadArtist:   track.Artist,
 				Album:        track.AlbumTitle,
 				AlbumArtist:  album.Artist,
 				Artists:      track.Artists,
@@ -926,6 +1120,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				TrackNumber:  track.TrackNumber,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
+				Credits:      *trackCredits,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1144,7 +1339,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 	}
 	flawP := flaw.P{"url": playlistURL}
 
-	respBytes, err := getPagedItems(ctx, accessToken, playlistURL, page)
+	respBytes, err := getListPagedItems(ctx, accessToken, playlistURL, page)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -1174,6 +1369,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 				ISRC         string `json:"isrc"`
 				Copyright    string `json:"copyright"`
 				Duration     int    `json:"duration"`
+				Artist       string `json:"artist"`
 				Artists      []struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
@@ -1221,6 +1417,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 			AlbumTitle:   v.Item.Album.Title,
 			ISRC:         v.Item.ISRC,
 			Copyright:    v.Item.Copyright,
+			Artist:       v.Item.Artist,
 			Artists:      artists,
 			CoverID:      v.Item.Album.CoverID,
 			Duration:     v.Item.Duration,
@@ -1264,6 +1461,11 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				return err
 			}
 
+			trackCredits, err := d.getTrackCredits(ctx, track.ID)
+			if nil != err {
+				return err
+			}
+
 			trackFs := mixFs.Track(track.ID)
 			if err := trackFs.Cover.Write(coverBytes); nil != err {
 				return err
@@ -1280,6 +1482,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 			}
 
 			attrs := TrackEmbeddedAttrs{
+				LeadArtist:   track.Artist,
 				Album:        track.AlbumTitle,
 				AlbumArtist:  album.Artist,
 				Artists:      track.Artists,
@@ -1292,6 +1495,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				TrackNumber:  track.TrackNumber,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
+				Credits:      *trackCredits,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1491,7 +1695,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 	}
 	flawP := flaw.P{"mix_url": mixURL}
 
-	respBytes, err := getPagedItems(ctx, accessToken, mixURL, page)
+	respBytes, err := getListPagedItems(ctx, accessToken, mixURL, page)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -1507,7 +1711,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 		}
 	}
 
-	var responseBody struct {
+	var respBody struct {
 		TotalNumberOfItems int `json:"totalNumberOfItems"`
 		Items              []struct {
 			Type string `json:"type"`
@@ -1520,6 +1724,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 				Copyright    string `json:"copyright"`
 				ISRC         string `json:"isrc"`
 				Duration     int    `json:"duration"`
+				Artist       string `json:"artist"`
 				Artists      []struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
@@ -1533,18 +1738,18 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 			} `json:"item"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal(respBytes, &responseBody); nil != err {
+	if err := json.Unmarshal(respBytes, &respBody); nil != err {
 		flawP["response_body"] = string(respBytes)
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, 0, flaw.From(fmt.Errorf("failed to decode mix response: %v", err)).Append(flawP)
 	}
 
-	thisPageItemsCount := len(responseBody.Items)
+	thisPageItemsCount := len(respBody.Items)
 	if thisPageItemsCount == 0 {
 		return nil, 0, nil
 	}
 
-	for _, v := range responseBody.Items {
+	for _, v := range respBody.Items {
 		if v.Type != pageItemTypeTrack || !v.Item.StreamReady {
 			continue
 		}
@@ -1564,6 +1769,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 			AlbumTitle:   v.Item.Album.Title,
 			ISRC:         v.Item.ISRC,
 			Copyright:    v.Item.Copyright,
+			Artist:       v.Item.Artist,
 			Artists:      artists,
 			CoverID:      v.Item.Album.Cover,
 			Duration:     v.Item.Duration,
@@ -1576,7 +1782,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 		ts = append(ts, t)
 	}
 
-	return ts, responseBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
+	return ts, respBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
 func (d *Downloader) Album(ctx context.Context, id string) error {
@@ -1604,6 +1810,12 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		return err
 	}
 
+	for _, volTracks := range volumes {
+		for _, track := range volTracks {
+			d.trackCreditsCache.Set(track.ID, &track.Credits, cache.DefaultTrackCreditsTTL)
+		}
+	}
+
 	if err := albumFs.CreateVolDirs(len(volumes)); nil != err {
 		return err
 	}
@@ -1623,6 +1835,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 				}
 
 				attrs := TrackEmbeddedAttrs{
+					LeadArtist:   track.Artist,
 					Album:        album.Title,
 					AlbumArtist:  album.Artist,
 					Artists:      track.Artists,
@@ -1635,6 +1848,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					TrackNumber:  track.TrackNumber,
 					Version:      track.Version,
 					VolumeNumber: track.VolumeNumber,
+					Credits:      track.Credits,
 				}
 				if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 					return err
@@ -1729,14 +1943,14 @@ func getAlbumVolumes(ctx context.Context, accessToken, id string) ([][]AlbumTrac
 }
 
 func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts []AlbumTrackMeta, rem int, err error) {
-	albumURL, err := url.JoinPath(fmt.Sprintf(albumItemsAPIFormat, id))
+	albumURL, err := url.JoinPath(fmt.Sprintf(albumItemsCreditsAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-		return nil, 0, flaw.From(fmt.Errorf("failed to join track base URL with track id: %v", err)).Append(flawP)
+		return nil, 0, flaw.From(fmt.Errorf("failed to join album tracks credits URL with id: %v", err)).Append(flawP)
 	}
 	flawP := flaw.P{"url": albumURL}
 
-	respBytes, err := getPagedItems(ctx, accessToken, albumURL, page)
+	respBytes, err := getAlbumPagedItems(ctx, accessToken, albumURL, page)
 	if nil != err {
 		switch {
 		case errutil.IsContext(ctx):
@@ -1755,8 +1969,9 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 	var respBody struct {
 		TotalNumberOfItems int `json:"totalNumberOfItems"`
 		Items              []struct {
-			Type string `json:"type"`
-			Item struct {
+			Type    string               `json:"type"`
+			Credits TrackCreditsResponse `json:"credits"`
+			Item    struct {
 				ID           int    `json:"id"`
 				StreamReady  bool   `json:"streamReady"`
 				TrackNumber  int    `json:"trackNumber"`
@@ -1807,6 +2022,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 		}
 
 		t := AlbumTrackMeta{
+			Artist:       v.Item.Artist.Name,
 			Artists:      artists,
 			Duration:     v.Item.Duration,
 			ID:           strconv.Itoa(v.Item.ID),
@@ -1816,6 +2032,7 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 			TrackNumber:  v.Item.TrackNumber,
 			Version:      v.Item.Version,
 			VolumeNumber: v.Item.VolumeNumber,
+			Credits:      v.Credits.toTrackCredits(),
 		}
 		ts = append(ts, t)
 	}
@@ -1823,17 +2040,29 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 	return ts, respBody.TotalNumberOfItems - (thisPageItemsCount + page*pageSize), nil
 }
 
-func getPagedItems(ctx context.Context, accessToken, itemsURL string, page int) ([]byte, error) {
+func getAlbumPagedItems(ctx context.Context, accessToken, itemsURL string, page int) ([]byte, error) {
+	reqParams := make(url.Values, 3)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("limit", strconv.Itoa(pageSize))
+	reqParams.Add("offset", strconv.Itoa(page*pageSize))
+	return getPagedItems(ctx, accessToken, itemsURL, reqParams)
+}
+
+func getListPagedItems(ctx context.Context, accessToken, itemsURL string, page int) ([]byte, error) {
+	reqParams := make(url.Values, 3)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("limit", strconv.Itoa(pageSize))
+	reqParams.Add("offset", strconv.Itoa(page*pageSize))
+	return getPagedItems(ctx, accessToken, itemsURL, reqParams)
+}
+
+func getPagedItems(ctx context.Context, accessToken, itemsURL string, reqParams url.Values) ([]byte, error) {
 	reqURL, err := url.Parse(itemsURL)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to parse page items URL: %v", err)).Append(flawP)
 	}
 
-	reqParams := make(url.Values, 3)
-	reqParams.Add("countryCode", "US")
-	reqParams.Add("limit", strconv.Itoa(pageSize))
-	reqParams.Add("offset", strconv.Itoa(page*pageSize))
 	reqURL.RawQuery = reqParams.Encode()
 	flawP := flaw.P{"encoded_query_params": reqURL.RawQuery}
 
