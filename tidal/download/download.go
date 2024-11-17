@@ -1762,8 +1762,10 @@ func albumTracksPage(ctx context.Context, accessToken, id string, page int) (ts 
 				Copyright    string `json:"copyright"`
 				ISRC         string `json:"isrc"`
 				Duration     int    `json:"duration"`
-				Artist       string `json:"artist"`
-				Artists      []struct {
+				Artist       struct {
+					Name string `json:"name"`
+				} `json:"artist"`
+				Artists []struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
 				} `json:"artists"`
