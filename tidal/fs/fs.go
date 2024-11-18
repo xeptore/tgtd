@@ -2,6 +2,7 @@ package fs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,17 +38,25 @@ type Album struct {
 	Cover    Cover
 }
 
-func (d Album) Track(vol int, id string) AlbumTrack {
-	trackPath := filepath.Join(d.DirPath, id)
+func (a Album) Track(vol int, id string) AlbumTrack {
+	trackPath := filepath.Join(a.DirPath, id)
 	return AlbumTrack{
 		Path:     trackPath,
-		InfoFile: InfoFile[StoredAlbumVolumeTrack]{Path: trackPath + ".json"},
+		InfoFile: InfoFile[StoredSingleTrack]{Path: trackPath + ".json"},
 	}
 }
 
 type AlbumTrack struct {
 	Path     string
-	InfoFile InfoFile[StoredAlbumVolumeTrack]
+	InfoFile InfoFile[StoredSingleTrack]
+}
+
+func (t AlbumTrack) Exists() (bool, error) {
+	return fileExists(t.Path)
+}
+
+func (t AlbumTrack) Remove() error {
+	return os.Remove(t.Path)
 }
 
 func (dir DownloadDir) Single(id string) SingleTrack {
@@ -72,19 +81,13 @@ type Playlist struct {
 	InfoFile InfoFile[StoredPlaylist]
 }
 
-func (p Playlist) Track(id string) PlaylistTrack {
+func (p Playlist) Track(id string) SingleTrack {
 	trackPath := filepath.Join(p.DirPath, id)
-	return PlaylistTrack{
+	return SingleTrack{
 		Path:     trackPath,
-		InfoFile: InfoFile[StoredPlaylistTrack]{Path: trackPath + ".json"},
+		InfoFile: InfoFile[StoredSingleTrack]{Path: trackPath + ".json"},
 		Cover:    Cover{Path: trackPath + ".jpg"},
 	}
-}
-
-type PlaylistTrack struct {
-	Path     string
-	InfoFile InfoFile[StoredPlaylistTrack]
-	Cover    Cover
 }
 
 func (dir DownloadDir) Mix(id string) Mix {
@@ -100,23 +103,31 @@ type Mix struct {
 	InfoFile InfoFile[StoredMix]
 }
 
-func (d Mix) Track(id string) MixTrack {
+func (d Mix) Track(id string) SingleTrack {
 	trackPath := filepath.Join(d.DirPath, id)
-	return MixTrack{
+	return SingleTrack{
 		Path:     trackPath,
-		InfoFile: InfoFile[StoredMixTrack]{Path: trackPath + ".json"},
+		InfoFile: InfoFile[StoredSingleTrack]{Path: trackPath + ".json"},
 		Cover:    Cover{Path: trackPath + ".jpg"},
 	}
 }
 
-type MixTrack struct {
-	Path     string
-	InfoFile InfoFile[StoredMixTrack]
-	Cover    Cover
-}
-
 type Cover struct {
 	Path string
+}
+
+func (c Cover) Exists() (bool, error) {
+	return fileExists(c.Path)
+}
+
+func fileExists(path string) (bool, error) {
+	if _, err := os.Stat(path); nil != err {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, flaw.From(fmt.Errorf("failed to stat file: %v", err))
+	}
+	return true, nil
 }
 
 func (c Cover) Write(b []byte) (err error) {
@@ -132,6 +143,7 @@ func (c Cover) Write(b []byte) (err error) {
 			if removeErr := os.Remove(c.Path); nil != removeErr {
 				flawP["err_debug_tree"] = errutil.Tree(removeErr).FlawP()
 				err = flaw.From(fmt.Errorf("failed to remove incomplete cover file: %v", removeErr)).Join(err).Append(flawP)
+				return
 			}
 		}
 
@@ -151,7 +163,12 @@ func (c Cover) Write(b []byte) (err error) {
 		return flaw.From(fmt.Errorf("failed to write cover file: %v", err)).Append(flawP)
 	}
 
-	return os.WriteFile(c.Path, b, 0o0600)
+	if err := f.Sync(); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to sync cover file: %v", err)).Append(flawP)
+	}
+
+	return nil
 }
 
 func (c Cover) Read() ([]byte, error) {
@@ -162,6 +179,14 @@ type SingleTrack struct {
 	Path     string
 	InfoFile InfoFile[StoredSingleTrack]
 	Cover    Cover
+}
+
+func (t SingleTrack) Exists() (bool, error) {
+	return fileExists(t.Path)
+}
+
+func (t SingleTrack) Remove() error {
+	return os.Remove(t.Path)
 }
 
 type InfoFile[T any] struct {

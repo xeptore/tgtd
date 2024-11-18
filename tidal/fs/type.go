@@ -1,20 +1,15 @@
 package fs
 
-import "github.com/xeptore/tgtd/tidal"
+import (
+	"github.com/xeptore/tgtd/tidal"
+)
 
 type StoredMix struct {
-	Caption string           `json:"caption"`
-	Tracks  []StoredMixTrack `json:"tracks"`
+	Caption  string   `json:"caption"`
+	TrackIDs []string `json:"track_ids"`
 }
 
-type StoredMixTrack TrackWithID
-
-type TrackWithID struct {
-	Track
-	ID string `json:"id"`
-}
-
-type Track struct {
+type TrackInfo struct {
 	Artists  []tidal.TrackArtist `json:"artists"`
 	Title    string              `json:"title"`
 	Duration int                 `json:"duration"`
@@ -24,26 +19,16 @@ type Track struct {
 }
 
 type StoredSingleTrack struct {
-	Track
-	Album   StoredSingleTrackAlbum `json:"album"`
-	Caption string                 `json:"caption"`
-}
-
-type StoredSingleTrackAlbum struct {
-	Title       string `json:"title"`
-	ReleaseDate string `json:"release_date"`
+	TrackInfo
+	Caption string `json:"caption"`
 }
 
 type StoredPlaylist struct {
-	Caption string                `json:"caption"`
-	Tracks  []StoredPlaylistTrack `json:"tracks"`
+	Caption  string   `json:"caption"`
+	TrackIDs []string `json:"track_ids"`
 }
-
-type StoredPlaylistTrack TrackWithID
 
 type StoredAlbum struct {
-	Caption string                     `json:"caption"`
-	Volumes [][]StoredAlbumVolumeTrack `json:"volumes"`
+	Caption        string     `json:"caption"`
+	VolumeTrackIDs [][]string `json:"volume_track_ids"`
 }
-
-type StoredAlbumVolumeTrack TrackWithID

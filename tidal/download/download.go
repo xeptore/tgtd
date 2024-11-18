@@ -22,10 +22,10 @@ import (
 	"github.com/xeptore/tgtd/config"
 	"github.com/xeptore/tgtd/errutil"
 	"github.com/xeptore/tgtd/httputil"
-	"github.com/xeptore/tgtd/iterutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/sliceutil"
 	"github.com/xeptore/tgtd/tidal"
 	"github.com/xeptore/tgtd/tidal/auth"
 	"github.com/xeptore/tgtd/tidal/fs"
@@ -80,7 +80,37 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 		return err
 	}
 
-	coverBytes, err := d.getCover(ctx, track.CoverID)
+	trackFs := d.dir.Single(id)
+	if exists, err := trackFs.Cover.Exists(); nil != err {
+		return err
+	} else if !exists {
+		coverBytes, err := d.getCover(ctx, track.CoverID)
+		if nil != err {
+			return err
+		}
+		if err := trackFs.Cover.Write(coverBytes); nil != err {
+			return err
+		}
+	}
+
+	if exists, err := trackFs.Exists(); nil != err {
+		return err
+	} else if exists {
+		return nil
+	}
+	defer func() {
+		if err != nil {
+			if removeErr := trackFs.Remove(); nil != removeErr {
+				flawP := flaw.P{
+					"err_debug_tree":  errutil.Tree(removeErr).FlawP(),
+					"track_file_path": trackFs.Path,
+				}
+				err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+	}()
+
+	format, err := downloadTrack(ctx, d.accessToken, id, trackFs.Path)
 	if nil != err {
 		return err
 	}
@@ -90,17 +120,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 		return err
 	}
 
-	trackFs := d.dir.Single(id)
-	if err := trackFs.Cover.Write(coverBytes); nil != err {
-		return err
-	}
-
 	album, err := d.getAlbumMeta(ctx, track.AlbumID)
-	if nil != err {
-		return err
-	}
-
-	format, err := downloadTrack(ctx, d.accessToken, id, trackFs.Path)
 	if nil != err {
 		return err
 	}
@@ -126,7 +146,7 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 	}
 
 	info := fs.StoredSingleTrack{
-		Track: fs.Track{
+		TrackInfo: fs.TrackInfo{
 			Artists:  track.Artists,
 			Title:    track.Title,
 			Duration: track.Duration,
@@ -134,17 +154,17 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 			Format:   *format,
 			CoverID:  track.CoverID,
 		},
-		Album: fs.StoredSingleTrackAlbum{
-			Title:       album.Title,
-			ReleaseDate: album.ReleaseDate.Format(tidal.ReleaseDateLayout),
-		},
-		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout)),
+		Caption: trackCaption(*album),
 	}
 	if err := trackFs.InfoFile.Write(info); nil != err {
 		return err
 	}
 
 	return nil
+}
+
+func trackCaption(album tidal.AlbumMeta) string {
+	return fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout))
 }
 
 func (d *Downloader) getTrackCredits(ctx context.Context, id string) (*tidal.TrackCredits, error) {
@@ -1079,24 +1099,43 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 	var (
 		playlistFs = d.dir.Playlist(id)
 		wg, wgCtx  = errgroup.WithContext(ctx)
-		formats    = make(map[int]tidal.TrackFormat, len(tracks))
 	)
 
 	wg.SetLimit(ratelimit.PlaylistDownloadConcurrency)
-	for i, track := range tracks {
-		wg.Go(func() error {
-			coverBytes, err := d.getCover(wgCtx, track.CoverID)
-			if nil != err {
+	for _, track := range tracks {
+		wg.Go(func() (err error) {
+			trackFs := playlistFs.Track(track.ID)
+			if exists, err := trackFs.Cover.Exists(); nil != err {
 				return err
+			} else if !exists {
+				coverBytes, err := d.getCover(ctx, track.CoverID)
+				if nil != err {
+					return err
+				}
+				if err := trackFs.Cover.Write(coverBytes); nil != err {
+					return err
+				}
 			}
+
+			if exists, err := trackFs.Exists(); nil != err {
+				return err
+			} else if exists {
+				return nil
+			}
+			defer func() {
+				if nil != err {
+					if removeErr := trackFs.Remove(); nil != removeErr {
+						flawP := flaw.P{
+							"err_debug_tree": errutil.Tree(removeErr).FlawP(),
+							"path":           trackFs.Path,
+						}
+						err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
+					}
+				}
+			}()
 
 			trackCredits, err := d.getTrackCredits(ctx, track.ID)
 			if nil != err {
-				return err
-			}
-
-			trackFs := playlistFs.Track(track.ID)
-			if err := trackFs.Cover.Write(coverBytes); nil != err {
 				return err
 			}
 
@@ -1130,7 +1169,21 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				return err
 			}
 
-			formats[i] = *format
+			info := fs.StoredSingleTrack{
+				TrackInfo: fs.TrackInfo{
+					Artists:  track.Artists,
+					Title:    track.Title,
+					Duration: track.Duration,
+					Version:  track.Version,
+					Format:   *format,
+					CoverID:  track.CoverID,
+				},
+				Caption: trackCaption(*album),
+			}
+			if err := trackFs.InfoFile.Write(info); nil != err {
+				return err
+			}
+
 			return nil
 		})
 	}
@@ -1140,20 +1193,8 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 	}
 
 	info := fs.StoredPlaylist{
-		Caption: fmt.Sprintf("%s (%d - %d)", playlist.Title, playlist.StartYear, playlist.EndYear),
-		Tracks: iterutil.Map(tracks, func(i int, v ListTrackMeta) fs.StoredPlaylistTrack {
-			return fs.StoredPlaylistTrack{
-				Track: fs.Track{
-					Artists:  v.Artists,
-					Title:    v.Title,
-					Duration: v.Duration,
-					Version:  v.Version,
-					Format:   formats[i],
-					CoverID:  v.CoverID,
-				},
-				ID: v.ID,
-			}
-		}),
+		Caption:  fmt.Sprintf("%s (%d - %d)", playlist.Title, playlist.StartYear, playlist.EndYear),
+		TrackIDs: sliceutil.Map(tracks, func(t ListTrackMeta) string { return t.ID }),
 	}
 	if err := playlistFs.InfoFile.Write(info); nil != err {
 		return err
@@ -1440,6 +1481,8 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 }
 
 func (d *Downloader) Mix(ctx context.Context, id string) error {
+	flawP := flaw.P{}
+
 	mix, err := getMixMeta(ctx, d.accessToken, id)
 	if nil != err {
 		return err
@@ -1453,23 +1496,40 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 	var (
 		mixFs     = d.dir.Mix(id)
 		wg, wgCtx = errgroup.WithContext(ctx)
-		formats   = make(map[int]tidal.TrackFormat, len(tracks))
 	)
+
 	wg.SetLimit(ratelimit.MixDownloadConcurrency)
-	for i, track := range tracks {
-		wg.Go(func() error {
-			coverBytes, err := d.getCover(wgCtx, track.CoverID)
-			if nil != err {
+	for _, track := range tracks {
+		wg.Go(func() (err error) {
+			trackFs := mixFs.Track(track.ID)
+			if exists, err := trackFs.Cover.Exists(); nil != err {
 				return err
+			} else if !exists {
+				coverBytes, err := d.getCover(ctx, track.CoverID)
+				if nil != err {
+					return err
+				}
+				if err := trackFs.Cover.Write(coverBytes); nil != err {
+					return err
+				}
 			}
+
+			if exists, err := trackFs.Exists(); nil != err {
+				return err
+			} else if exists {
+				return nil
+			}
+			defer func() {
+				if nil != err {
+					if removeErr := trackFs.Remove(); nil != removeErr {
+						flawP["err_debug_tree"] = errutil.Tree(removeErr).FlawP()
+						err = flaw.From(fmt.Errorf("failed to remove track directory: %v", removeErr)).Append(flawP)
+					}
+				}
+			}()
 
 			trackCredits, err := d.getTrackCredits(ctx, track.ID)
 			if nil != err {
-				return err
-			}
-
-			trackFs := mixFs.Track(track.ID)
-			if err := trackFs.Cover.Write(coverBytes); nil != err {
 				return err
 			}
 
@@ -1503,7 +1563,21 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				return err
 			}
 
-			formats[i] = *format
+			info := fs.StoredSingleTrack{
+				TrackInfo: fs.TrackInfo{
+					Artists:  track.Artists,
+					Title:    track.Title,
+					Duration: track.Duration,
+					Version:  track.Version,
+					Format:   *format,
+					CoverID:  track.CoverID,
+				},
+				Caption: trackCaption(*album),
+			}
+			if err := trackFs.InfoFile.Write(info); nil != err {
+				return err
+			}
+
 			return nil
 		})
 	}
@@ -1513,20 +1587,8 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 	}
 
 	info := fs.StoredMix{
-		Caption: mix.Title,
-		Tracks: iterutil.Map(tracks, func(i int, v ListTrackMeta) fs.StoredMixTrack {
-			return fs.StoredMixTrack{
-				Track: fs.Track{
-					Artists:  v.Artists,
-					Title:    v.Title,
-					Duration: v.Duration,
-					Version:  v.Version,
-					Format:   formats[i],
-					CoverID:  v.CoverID,
-				},
-				ID: v.ID,
-			}
-		}),
+		Caption:  mix.Title,
+		TrackIDs: sliceutil.Map(tracks, func(t ListTrackMeta) string { return t.ID }),
 	}
 	if err := mixFs.InfoFile.Write(info); nil != err {
 		return err
@@ -1795,14 +1857,17 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		return err
 	}
 
-	coverBytes, err := d.getCover(ctx, album.CoverID)
-	if nil != err {
-		return err
-	}
-
 	albumFs := d.dir.Album(id)
-	if err := albumFs.Cover.Write(coverBytes); nil != err {
+	if exists, err := albumFs.Cover.Exists(); nil != err {
 		return err
+	} else if !exists {
+		coverBytes, err := d.getCover(ctx, album.CoverID)
+		if nil != err {
+			return err
+		}
+		if err := albumFs.Cover.Write(coverBytes); nil != err {
+			return err
+		}
 	}
 
 	volumes, err := getAlbumVolumes(ctx, d.accessToken, id)
@@ -1816,15 +1881,36 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		}
 	}
 
-	wg, wgCtx := errgroup.WithContext(ctx)
+	var (
+		wg, wgCtx           = errgroup.WithContext(ctx)
+		albumVolumeTrackIDs = make([][]string, len(volumes))
+	)
+
 	wg.SetLimit(ratelimit.AlbumDownloadConcurrency)
-	albumVolumes := make([][]fs.StoredAlbumVolumeTrack, len(volumes))
 	for i, tracks := range volumes {
+		albumVolumeTrackIDs[i] = sliceutil.Map(tracks, func(t AlbumTrackMeta) string { return t.ID })
+
 		volNum := i + 1
-		volumeTracks := make([]fs.StoredAlbumVolumeTrack, len(tracks))
-		for j, track := range tracks {
-			wg.Go(func() error {
+		for _, track := range tracks {
+			wg.Go(func() (err error) {
 				trackFs := albumFs.Track(volNum, track.ID)
+				if exists, err := trackFs.Exists(); nil != err {
+					return err
+				} else if exists {
+					return nil
+				}
+				defer func() {
+					if nil != err {
+						if removeErr := trackFs.Remove(); nil != removeErr {
+							flawP := flaw.P{
+								"err_debug_tree": errutil.Tree(removeErr).FlawP(),
+								"path":           trackFs.Path,
+							}
+							err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
+						}
+					}
+				}()
+
 				format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
 				if nil != err {
 					return err
@@ -1850,21 +1936,24 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					return err
 				}
 
-				volumeTracks[j] = fs.StoredAlbumVolumeTrack{
-					Track: fs.Track{
+				info := fs.StoredSingleTrack{
+					TrackInfo: fs.TrackInfo{
 						Artists:  track.Artists,
 						Title:    track.Title,
 						Duration: track.Duration,
 						Version:  track.Version,
 						Format:   *format,
-						CoverID:  id,
+						CoverID:  album.CoverID,
 					},
-					ID: track.ID,
+					Caption: trackCaption(*album),
 				}
+				if err := trackFs.InfoFile.Write(info); nil != err {
+					return err
+				}
+
 				return nil
 			})
 		}
-		albumVolumes[i] = volumeTracks
 	}
 
 	if err := wg.Wait(); nil != err {
@@ -1872,8 +1961,8 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	}
 
 	info := fs.StoredAlbum{
-		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout)),
-		Volumes: albumVolumes,
+		Caption:        fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout)),
+		VolumeTrackIDs: albumVolumeTrackIDs,
 	}
 	if err := albumFs.InfoFile.Write(info); nil != err {
 		return err
