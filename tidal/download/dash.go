@@ -76,6 +76,13 @@ func (d *DashTrackStream) saveTo(ctx context.Context, accessToken string, fileNa
 		return flaw.From(fmt.Errorf("failed to create track file: %v", err)).Append(flawP)
 	}
 	defer func() {
+		if nil != err {
+			if removeErr := os.Remove(fileName); nil != removeErr {
+				flawP["err_debug_tree"] = errutil.Tree(removeErr).FlawP()
+				err = flaw.From(fmt.Errorf("failed to remove incomplete track file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+
 		if closeErr := f.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close track file: %v", closeErr)).Append(flawP)
@@ -152,6 +159,13 @@ func (d *DashTrackStream) downloadBatch(ctx context.Context, accessToken, fileNa
 		return flaw.From(fmt.Errorf("failed to create track part file: %v", err)).Append(flawP)
 	}
 	defer func() {
+		if nil != err {
+			if removeErr := os.Remove(f.Name()); nil != removeErr {
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(removeErr).FlawP()}
+				err = flaw.From(fmt.Errorf("failed to remove incomplete track part file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+
 		if closeErr := f.Close(); nil != closeErr {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
 			closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr)).Append(flawP)

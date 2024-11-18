@@ -119,7 +119,38 @@ type Cover struct {
 	Path string
 }
 
-func (c Cover) Write(b []byte) error {
+func (c Cover) Write(b []byte) (err error) {
+	flawP := flaw.P{}
+
+	f, err := os.OpenFile(c.Path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to open cover file for write: %v", err)).Append(flawP)
+	}
+	defer func() {
+		if nil != err {
+			if removeErr := os.Remove(c.Path); nil != removeErr {
+				flawP["err_debug_tree"] = errutil.Tree(removeErr).FlawP()
+				err = flaw.From(fmt.Errorf("failed to remove incomplete cover file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+
+		if closeErr := f.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close cover file: %v", closeErr)).Append(flawP)
+			if nil != err {
+				err = must.BeFlaw(err).Join(closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+
+	if _, err := f.Write(b); nil != err {
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return flaw.From(fmt.Errorf("failed to write cover file: %v", err)).Append(flawP)
+	}
+
 	return os.WriteFile(c.Path, b, 0o0600)
 }
 
@@ -145,11 +176,11 @@ func (p InfoFile[T]) Write(v T) error {
 	return writeInfoFile(p, v)
 }
 
-func readInfoFile[T any](file InfoFile[T]) (*T, error) {
+func readInfoFile[T any](file InfoFile[T]) (t *T, err error) {
 	filePath := file.Path
 	flawP := flaw.P{"file_path": filePath}
 
-	f, err := os.OpenFile(filePath, os.O_RDONLY, 0o0644)
+	f, err := os.OpenFile(filePath, os.O_RDONLY, 0o0600)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to open info file for read: %v", err)).Append(flawP)
@@ -175,16 +206,23 @@ func readInfoFile[T any](file InfoFile[T]) (*T, error) {
 	return &out, nil
 }
 
-func writeInfoFile[T any](file InfoFile[T], obj any) error {
+func writeInfoFile[T any](file InfoFile[T], obj any) (err error) {
 	filePath := file.Path
 	flawP := flaw.P{"path": filePath}
 
-	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o0644)
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o0600)
 	if nil != err {
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return flaw.From(fmt.Errorf("failed to open info file for write: %v", err)).Append(flawP)
 	}
 	defer func() {
+		if nil != err {
+			if removeErr := os.Remove(filePath); nil != removeErr {
+				flawP["err_debug_tree"] = errutil.Tree(removeErr).FlawP()
+				err = flaw.From(fmt.Errorf("failed to remove incomplete info file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+
 		if closeErr := f.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close info file: %v", closeErr)).Append(flawP)

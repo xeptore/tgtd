@@ -159,7 +159,7 @@ func (d *Downloader) getTrackCredits(ctx context.Context, id string) (*tidal.Tra
 	return cachedTrackCredits.Value(), nil
 }
 
-func fetchTrackCredits(ctx context.Context, accessToken string, id string) (*tidal.TrackCredits, error) {
+func fetchTrackCredits(ctx context.Context, accessToken string, id string) (c *tidal.TrackCredits, err error) {
 	reqURL, err := url.Parse(fmt.Sprintf(trackCreditsAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -317,7 +317,19 @@ type TrackEmbeddedAttrs struct {
 	Credits      tidal.TrackCredits
 }
 
-func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackEmbeddedAttrs) error {
+func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackEmbeddedAttrs) (err error) {
+	defer func() {
+		if nil != err {
+			if removeErr := os.Remove(trackFilePath); nil != removeErr {
+				flawP := flaw.P{
+					"err_debug_tree":  errutil.Tree(removeErr).FlawP(),
+					"track_file_path": trackFilePath,
+				}
+				err = flaw.From(fmt.Errorf("failed to remove original track file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+	}()
+
 	ext := attrs.Format.InferTrackExt()
 	trackFilePathWithExt := trackFilePath + "." + ext
 
@@ -393,7 +405,7 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 	return nil
 }
 
-func getSingleTrackMeta(ctx context.Context, accessToken, id string) (*SingleTrackMeta, error) {
+func getSingleTrackMeta(ctx context.Context, accessToken, id string) (m *SingleTrackMeta, err error) {
 	trackURL := fmt.Sprintf(trackAPIFormat, id)
 	flawP := flaw.P{"url": trackURL}
 
@@ -681,7 +693,7 @@ func (d *Downloader) getAlbumMeta(ctx context.Context, id string) (*tidal.AlbumM
 	return cachedAlbumMeta.Value(), nil
 }
 
-func fetchAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMeta, error) {
+func fetchAlbumMeta(ctx context.Context, accessToken, id string) (m *tidal.AlbumMeta, err error) {
 	albumURL, err := url.JoinPath(fmt.Sprintf(albumAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -1150,7 +1162,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 	return nil
 }
 
-func getPlaylistMeta(ctx context.Context, accessToken, id string) (*PlaylistMeta, error) {
+func getPlaylistMeta(ctx context.Context, accessToken, id string) (m *PlaylistMeta, err error) {
 	playlistURL, err := url.JoinPath(fmt.Sprintf(playlistAPIFormat, id))
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
@@ -1523,7 +1535,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 	return nil
 }
 
-func getMixMeta(ctx context.Context, accessToken, id string) (*MixMeta, error) {
+func getMixMeta(ctx context.Context, accessToken, id string) (m *MixMeta, err error) {
 	flawP := flaw.P{}
 	reqURL, err := url.Parse(mixInfoURL)
 	if nil != err {
@@ -2040,7 +2052,7 @@ func getListPagedItems(ctx context.Context, accessToken, itemsURL string, page i
 	return getPagedItems(ctx, accessToken, itemsURL, reqParams)
 }
 
-func getPagedItems(ctx context.Context, accessToken, itemsURL string, reqParams url.Values) ([]byte, error) {
+func getPagedItems(ctx context.Context, accessToken, itemsURL string, reqParams url.Values) (b []byte, err error) {
 	reqURL, err := url.Parse(itemsURL)
 	if nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}

@@ -25,7 +25,7 @@ type VndTrackStream struct {
 	URL string
 }
 
-func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileName string) error {
+func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileName string) (err error) {
 	fileSize, err := d.fileSize(ctx, accessToken)
 	if nil != err {
 		return err
@@ -53,6 +53,13 @@ func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileNam
 				return flaw.From(fmt.Errorf("failed to create track part file: %v", err)).Append(flawP)
 			}
 			defer func() {
+				if nil != err {
+					if removeErr := os.Remove(partFileName); nil != removeErr {
+						flawP := flaw.P{"err_debug_tree": errutil.Tree(removeErr).FlawP()}
+						err = flaw.From(fmt.Errorf("failed to remove incomplete track part file: %v", removeErr)).Join(err).Append(flawP)
+					}
+				}
+
 				if closeErr := f.Close(); nil != closeErr {
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
 					closeErr = flaw.From(fmt.Errorf("failed to close track part file: %v", closeErr)).Append(flawP)
@@ -112,6 +119,13 @@ func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileNam
 		return flaw.From(fmt.Errorf("failed to create track file: %v", err)).Append(flawP)
 	}
 	defer func() {
+		if nil != err {
+			if removeErr := os.Remove(fileName); nil != removeErr {
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(removeErr).FlawP()}
+				err = flaw.From(fmt.Errorf("failed to remove incomplete track file: %v", removeErr)).Join(err).Append(flawP)
+			}
+		}
+
 		if closeErr := f.Close(); nil != closeErr {
 			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
 			closeErr = flaw.From(fmt.Errorf("failed to close track file: %v", closeErr)).Append(flawP)
