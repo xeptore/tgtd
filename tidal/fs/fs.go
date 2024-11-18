@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/xeptore/flaw/v8"
 
@@ -19,8 +18,12 @@ func From(d string) DownloadDir {
 	return DownloadDir(d)
 }
 
+func (d DownloadDir) path() string {
+	return string(d)
+}
+
 func (d DownloadDir) Album(id string) Album {
-	path := filepath.Join(string(d), id)
+	path := d.path()
 	return Album{
 		Path:     path,
 		InfoFile: InfoFile[StoredAlbum]{Path: filepath.Join(path, id+".json")},
@@ -29,7 +32,7 @@ func (d DownloadDir) Album(id string) Album {
 }
 
 func (d DownloadDir) Single(id string) SingleTrack {
-	path := filepath.Join(string(d), id)
+	path := d.path()
 	return SingleTrack{
 		Path:     path,
 		InfoFile: InfoFile[StoredSingleTrack]{Path: path + ".json"},
@@ -38,7 +41,7 @@ func (d DownloadDir) Single(id string) SingleTrack {
 }
 
 func (d DownloadDir) Playlist(id string) Playlist {
-	path := filepath.Join(string(d), id)
+	path := d.path()
 	return Playlist{
 		Path:     path,
 		InfoFile: InfoFile[StoredPlaylist]{Path: filepath.Join(path, id+".json")},
@@ -46,7 +49,7 @@ func (d DownloadDir) Playlist(id string) Playlist {
 }
 
 func (d DownloadDir) Mix(id string) Mix {
-	path := filepath.Join(string(d), "mixes", id)
+	path := d.path()
 	return Mix{
 		Path:     path,
 		InfoFile: InfoFile[StoredMix]{Path: filepath.Join(path, id+".json")},
@@ -60,7 +63,7 @@ type Album struct {
 }
 
 func (d Album) Track(vol int, id string) AlbumTrack {
-	path := filepath.Join(d.Path, strconv.Itoa(vol), id)
+	path := d.Path
 	return AlbumTrack{
 		Path:     path,
 		InfoFile: InfoFile[StoredAlbumVolumeTrack]{Path: path + ".json"},
@@ -78,7 +81,7 @@ type Playlist struct {
 }
 
 func (d Playlist) Track(id string) PlaylistTrack {
-	path := filepath.Join(d.Path, id)
+	path := d.Path
 	return PlaylistTrack{
 		Path:     path,
 		InfoFile: InfoFile[StoredPlaylistTrack]{Path: path + ".json"},
@@ -98,7 +101,7 @@ type Mix struct {
 }
 
 func (d Mix) Track(id string) MixTrack {
-	path := filepath.Join(d.Path, id)
+	path := d.Path
 	return MixTrack{
 		Path:     path,
 		InfoFile: InfoFile[StoredMixTrack]{Path: path + ".json"},
