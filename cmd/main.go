@@ -800,7 +800,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := dl.Playlist(jobCtx, id); nil != err {
 				switch {
-				case errutil.IsContext(ctx):
+				case errutil.IsContext(jobCtx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
@@ -828,7 +828,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 
 		if err := w.uploadPlaylist(jobCtx, downloadBaseDir); nil != err {
 			switch {
-			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
+			case errutil.IsContext(jobCtx), errors.Is(err, context.DeadlineExceeded):
 				return err
 			case errutil.IsFlaw(err):
 				return must.BeFlaw(err).Append(flawP)
@@ -859,7 +859,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := dl.Album(jobCtx, id); nil != err {
 				switch {
-				case errutil.IsContext(ctx):
+				case errutil.IsContext(jobCtx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
@@ -886,8 +886,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		if err := w.uploadAlbum(jobCtx, downloadBaseDir); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
+			if errutil.IsContext(jobCtx) {
+				return jobCtx.Err()
 			}
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
@@ -914,7 +914,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := dl.Single(jobCtx, id); nil != err {
 				switch {
-				case errutil.IsContext(ctx):
+				case errutil.IsContext(jobCtx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
@@ -941,8 +941,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		if err := w.uploadSingle(jobCtx, downloadBaseDir); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
+			if errutil.IsContext(jobCtx) {
+				return jobCtx.Err()
 			}
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
@@ -969,7 +969,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
 			if err := dl.Mix(jobCtx, id); nil != err {
 				switch {
-				case errutil.IsContext(ctx):
+				case errutil.IsContext(jobCtx):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
@@ -996,8 +996,8 @@ func (w *Worker) run(ctx context.Context, msgID int, link string) error {
 		}
 
 		if err := w.uploadMix(jobCtx, downloadBaseDir); nil != err {
-			if errutil.IsContext(ctx) {
-				return ctx.Err()
+			if errutil.IsContext(jobCtx) {
+				return jobCtx.Err()
 			}
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
