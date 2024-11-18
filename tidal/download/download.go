@@ -328,10 +328,6 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 
 	metaTags := []string{
 		"ARTIST=" + tidal.JoinArtists(attrs.Artists),
-		"COMPOSER=" + tidal.JoinNames(attrs.Credits.Composers),
-		"LYRICIST=" + tidal.JoinNames(attrs.Credits.Lyricists),
-		"PRODUCER=" + tidal.JoinNames(attrs.Credits.Producers),
-		"COPRODUCER=" + tidal.JoinNames(attrs.Credits.AdditionalProducers),
 		"LEAD_PERFORMER=" + attrs.LeadArtist,
 		"TITLE=" + attrs.Title,
 		"ALBUM=" + attrs.Album,
@@ -344,8 +340,21 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 		"YEAR=" + strconv.Itoa(attrs.ReleaseDate.Year()),
 	}
 
+	if len(attrs.Credits.Composers) > 0 {
+		metaTags = append(metaTags, "COMPOSER="+tidal.JoinNames(attrs.Credits.Composers))
+	}
+	if len(attrs.Credits.Lyricists) > 0 {
+		metaTags = append(metaTags, "LYRICIST="+tidal.JoinNames(attrs.Credits.Lyricists))
+	}
+	if len(attrs.Credits.Producers) > 0 {
+		metaTags = append(metaTags, "PRODUCER="+tidal.JoinNames(attrs.Credits.Producers))
+	}
+	if len(attrs.Credits.AdditionalProducers) > 0 {
+		metaTags = append(metaTags, "COPRODUCER="+tidal.JoinNames(attrs.Credits.AdditionalProducers))
+	}
+
 	if nil != attrs.Version {
-		metaTags = append(metaTags, "version="+*attrs.Version)
+		metaTags = append(metaTags, "VERSION="+*attrs.Version)
 	}
 
 	metaArgs := make([]string, 0, len(metaTags)*2)
