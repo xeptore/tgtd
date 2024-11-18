@@ -6,6 +6,8 @@ import (
 	"github.com/samber/lo"
 )
 
+const ReleaseDateLayout = "2006/01/02"
+
 type TrackArtist struct {
 	Name string `json:"name"`
 	Type string `json:"type"`

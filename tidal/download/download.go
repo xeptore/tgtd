@@ -141,9 +141,9 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 		},
 		Album: fs.StoredSingleTrackAlbum{
 			Title:       album.Title,
-			ReleaseDate: album.ReleaseDate.Format(time.DateOnly),
+			ReleaseDate: album.ReleaseDate.Format(tidal.ReleaseDateLayout),
 		},
-		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(time.DateOnly)),
+		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout)),
 	}
 	if err := trackFs.InfoFile.Write(info); nil != err {
 		return err
@@ -1881,7 +1881,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	}
 
 	info := fs.StoredAlbum{
-		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(time.DateOnly)),
+		Caption: fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout)),
 		Volumes: albumVolumes,
 	}
 	if err := albumFs.InfoFile.Write(info); nil != err {
