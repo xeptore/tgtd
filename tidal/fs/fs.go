@@ -18,55 +18,30 @@ func From(d string) DownloadDir {
 	return DownloadDir(d)
 }
 
-func (d DownloadDir) path() string {
-	return string(d)
+func (dir DownloadDir) path() string {
+	return string(dir)
 }
 
-func (d DownloadDir) Album(id string) Album {
-	path := d.path()
+func (dir DownloadDir) Album(id string) Album {
+	dirPath := dir.path()
 	return Album{
-		Path:     path,
-		InfoFile: InfoFile[StoredAlbum]{Path: filepath.Join(path, id+".json")},
-		Cover:    Cover{Path: filepath.Join(path, id+".jpg")},
-	}
-}
-
-func (d DownloadDir) Single(id string) SingleTrack {
-	path := d.path()
-	return SingleTrack{
-		Path:     path,
-		InfoFile: InfoFile[StoredSingleTrack]{Path: path + ".json"},
-		Cover:    Cover{Path: path + ".jpg"},
-	}
-}
-
-func (d DownloadDir) Playlist(id string) Playlist {
-	path := d.path()
-	return Playlist{
-		Path:     path,
-		InfoFile: InfoFile[StoredPlaylist]{Path: filepath.Join(path, id+".json")},
-	}
-}
-
-func (d DownloadDir) Mix(id string) Mix {
-	path := d.path()
-	return Mix{
-		Path:     path,
-		InfoFile: InfoFile[StoredMix]{Path: filepath.Join(path, id+".json")},
+		DirPath:  dirPath,
+		InfoFile: InfoFile[StoredAlbum]{Path: filepath.Join(dirPath, id+".json")},
+		Cover:    Cover{Path: filepath.Join(dirPath, id+".jpg")},
 	}
 }
 
 type Album struct {
-	Path     string
+	DirPath  string
 	InfoFile InfoFile[StoredAlbum]
 	Cover    Cover
 }
 
 func (d Album) Track(vol int, id string) AlbumTrack {
-	path := d.Path
+	trackPath := filepath.Join(d.DirPath, id)
 	return AlbumTrack{
-		Path:     path,
-		InfoFile: InfoFile[StoredAlbumVolumeTrack]{Path: path + ".json"},
+		Path:     trackPath,
+		InfoFile: InfoFile[StoredAlbumVolumeTrack]{Path: trackPath + ".json"},
 	}
 }
 
@@ -75,17 +50,34 @@ type AlbumTrack struct {
 	InfoFile InfoFile[StoredAlbumVolumeTrack]
 }
 
+func (dir DownloadDir) Single(id string) SingleTrack {
+	trackPath := filepath.Join(dir.path(), id)
+	return SingleTrack{
+		Path:     trackPath,
+		InfoFile: InfoFile[StoredSingleTrack]{Path: trackPath + ".json"},
+		Cover:    Cover{Path: trackPath + ".jpg"},
+	}
+}
+
+func (dir DownloadDir) Playlist(id string) Playlist {
+	dirPath := dir.path()
+	return Playlist{
+		DirPath:  dirPath,
+		InfoFile: InfoFile[StoredPlaylist]{Path: filepath.Join(dirPath, id+".json")},
+	}
+}
+
 type Playlist struct {
-	Path     string
+	DirPath  string
 	InfoFile InfoFile[StoredPlaylist]
 }
 
-func (d Playlist) Track(id string) PlaylistTrack {
-	path := d.Path
+func (p Playlist) Track(id string) PlaylistTrack {
+	trackPath := filepath.Join(p.DirPath, id)
 	return PlaylistTrack{
-		Path:     path,
-		InfoFile: InfoFile[StoredPlaylistTrack]{Path: path + ".json"},
-		Cover:    Cover{Path: path + ".jpg"},
+		Path:     trackPath,
+		InfoFile: InfoFile[StoredPlaylistTrack]{Path: trackPath + ".json"},
+		Cover:    Cover{Path: trackPath + ".jpg"},
 	}
 }
 
@@ -95,17 +87,25 @@ type PlaylistTrack struct {
 	Cover    Cover
 }
 
+func (dir DownloadDir) Mix(id string) Mix {
+	dirPath := dir.path()
+	return Mix{
+		DirPath:  dirPath,
+		InfoFile: InfoFile[StoredMix]{Path: filepath.Join(dirPath, id+".json")},
+	}
+}
+
 type Mix struct {
-	Path     string
+	DirPath  string
 	InfoFile InfoFile[StoredMix]
 }
 
 func (d Mix) Track(id string) MixTrack {
-	path := d.Path
+	trackPath := filepath.Join(d.DirPath, id)
 	return MixTrack{
-		Path:     path,
-		InfoFile: InfoFile[StoredMixTrack]{Path: path + ".json"},
-		Cover:    Cover{Path: path + ".jpg"},
+		Path:     trackPath,
+		InfoFile: InfoFile[StoredMixTrack]{Path: trackPath + ".json"},
+		Cover:    Cover{Path: trackPath + ".jpg"},
 	}
 }
 
