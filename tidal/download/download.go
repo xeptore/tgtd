@@ -91,11 +91,6 @@ func (d *Downloader) Single(ctx context.Context, id string) error {
 	}
 
 	trackFs := d.dir.Single(id)
-
-	if err := trackFs.CreateDir(); nil != err {
-		return err
-	}
-
 	if err := trackFs.Cover.Write(coverBytes); nil != err {
 		return err
 	}
@@ -1069,14 +1064,10 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 		return err
 	}
 
-	playlistFs := d.dir.Playlist(id)
-	if err := playlistFs.CreateDir(); nil != err {
-		return err
-	}
-
 	var (
-		wg, wgCtx = errgroup.WithContext(ctx)
-		formats   = make(map[int]tidal.TrackFormat, len(tracks))
+		playlistFs = d.dir.Playlist(id)
+		wg, wgCtx  = errgroup.WithContext(ctx)
+		formats    = make(map[int]tidal.TrackFormat, len(tracks))
 	)
 
 	wg.SetLimit(ratelimit.PlaylistDownloadConcurrency)
@@ -1447,12 +1438,8 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 		return err
 	}
 
-	mixFs := d.dir.Mix(id)
-	if err := mixFs.CreateDir(); nil != err {
-		return err
-	}
-
 	var (
+		mixFs     = d.dir.Mix(id)
 		wg, wgCtx = errgroup.WithContext(ctx)
 		formats   = make(map[int]tidal.TrackFormat, len(tracks))
 	)
@@ -1802,10 +1789,6 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	}
 
 	albumFs := d.dir.Album(id)
-	if err := albumFs.CreateDir(); nil != err {
-		return err
-	}
-
 	if err := albumFs.Cover.Write(coverBytes); nil != err {
 		return err
 	}
@@ -1819,10 +1802,6 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		for _, track := range volTracks {
 			d.trackCreditsCache.Set(track.ID, &track.Credits, cache.DefaultTrackCreditsTTL)
 		}
-	}
-
-	if err := albumFs.CreateVolDirs(len(volumes)); nil != err {
-		return err
 	}
 
 	wg, wgCtx := errgroup.WithContext(ctx)
