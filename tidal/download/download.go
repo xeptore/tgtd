@@ -358,6 +358,8 @@ func fetchTrackLyrics(ctx context.Context, accessToken string, id string) (l str
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
+	case http.StatusNotFound:
+		return "", nil
 	case http.StatusUnauthorized:
 		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
 		if nil != err {
