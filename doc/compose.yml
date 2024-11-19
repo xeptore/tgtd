@@ -20,6 +20,14 @@ services:
         target: /home/nonroot/config.yml
         read_only: true
       - type: bind
+        # To create this directory, run `install -d -m 0700 -o 1000 -g 1000 ./downloads`
+        source: ./downloads
+        target: /home/nonroot/downloads
+        bind:
+          propagation: shared
+          create_host_path: false
+      - type: bind
+        # To create this directory, run `install -d -m 0700 -o 1000 -g 1000 ./.creds`
         source: ./.creds
         target: /home/nonroot/.creds
         bind:
