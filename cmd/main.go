@@ -681,7 +681,6 @@ func (w *Worker) newUploader(ctx context.Context) (*uploader.Uploader, func() er
 type Job struct {
 	ID        string
 	CreatedAt time.Time
-	Link      string
 	MessageID int
 	cancel    context.CancelFunc
 }
@@ -690,7 +689,6 @@ func (j *Job) flawP() flaw.P {
 	return flaw.P{
 		"id":         j.ID,
 		"created_at": j.CreatedAt,
-		"link":       j.Link,
 		"message_id": j.MessageID,
 	}
 }
