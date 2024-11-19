@@ -29,7 +29,7 @@ func JoinArtists(artists []TrackArtist) string {
 }
 
 func JoinNames(names []string) string {
-	return strings.Join(names, ";")
+	return strings.Join(names, ", ")
 }
 
 type TrackCredits struct {
