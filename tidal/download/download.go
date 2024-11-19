@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/tidwall/gjson"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
@@ -482,7 +483,7 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 		"disctotal=" + strconv.Itoa(attrs.TotalVolumes),
 		"date=" + attrs.ReleaseDate.Format(time.DateOnly),
 		"year=" + strconv.Itoa(attrs.ReleaseDate.Year()),
-		"lyrics=" + attrs.Lyrics,
+		"lyrics=" + lo.Ternary(len(attrs.Lyrics) == 0, "", attrs.Lyrics),
 	}
 
 	if len(attrs.Credits.Composers) > 0 {
