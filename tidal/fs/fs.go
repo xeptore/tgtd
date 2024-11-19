@@ -56,7 +56,13 @@ func (t AlbumTrack) Exists() (bool, error) {
 }
 
 func (t AlbumTrack) Remove() error {
-	return os.Remove(t.Path)
+	if err := os.Remove(t.Path); nil != err {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return flaw.From(fmt.Errorf("failed to remove album track: %v", err))
+	}
+	return nil
 }
 
 func (dir DownloadDir) Single(id string) SingleTrack {

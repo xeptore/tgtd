@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/tidwall/gjson"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
@@ -35,6 +36,7 @@ import (
 const (
 	trackAPIFormat             = "https://api.tidal.com/v1/tracks/%s"
 	trackCreditsAPIFormat      = "https://api.tidal.com/v1/tracks/%s/credits" //nolint:gosec
+	trackLyricsAPIFormat       = "https://api.tidal.com/v1/tracks/%s/lyrics"
 	albumAPIFormat             = "https://api.tidal.com/v1/albums/%s"
 	playlistAPIFormat          = "https://api.tidal.com/v1/playlists/%s"
 	mixInfoURL                 = "https://listen.tidal.com/v1/pages/mix"
@@ -120,6 +122,11 @@ func (d *Downloader) Single(ctx context.Context, id string) (err error) {
 		return err
 	}
 
+	trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+	if nil != err {
+		return err
+	}
+
 	album, err := d.getAlbumMeta(ctx, track.AlbumID)
 	if nil != err {
 		return err
@@ -137,9 +144,12 @@ func (d *Downloader) Single(ctx context.Context, id string) (err error) {
 		ReleaseDate:  album.ReleaseDate,
 		Title:        track.Title,
 		TrackNumber:  track.TrackNumber,
+		TotalTracks:  album.TotalTracks,
 		Version:      track.Version,
 		VolumeNumber: track.VolumeNumber,
+		TotalVolumes: album.TotalVolumes,
 		Credits:      *trackCredits,
+		Lyrics:       trackLyrics,
 	}
 	if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 		return err
@@ -203,7 +213,7 @@ func fetchTrackCredits(ctx context.Context, accessToken string, id string) (c *t
 	}
 	req.Header.Add("Authorization", "Bearer "+accessToken)
 
-	client := http.Client{Timeout: config.GetPageTracksRequestTimeout} //nolint:exhaustruct
+	client := http.Client{Timeout: config.GetTrackCreditsRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
@@ -287,6 +297,123 @@ func fetchTrackCredits(ctx context.Context, accessToken string, id string) (c *t
 	return ptr.Of(respBody.toTrackCredits()), nil
 }
 
+func fetchTrackLyrics(ctx context.Context, accessToken string, id string) (l string, err error) {
+	reqURL, err := url.Parse(fmt.Sprintf(trackLyricsAPIFormat, id))
+	if nil != err {
+		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+		return "", flaw.From(fmt.Errorf("failed to parse track lyrics URL: %v", err)).Append(flawP)
+	}
+
+	reqParams := make(url.Values, 2)
+	reqParams.Add("countryCode", "US")
+	reqParams.Add("includeContributors", "true")
+	reqURL.RawQuery = reqParams.Encode()
+	flawP := flaw.P{"encoded_query_params": reqURL.RawQuery}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+	if nil != err {
+		if errutil.IsContext(ctx) {
+			return "", ctx.Err()
+		}
+
+		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+		return "", flaw.From(fmt.Errorf("failed to create get track lyrics request: %v", err)).Append(flawP)
+	}
+	req.Header.Add("Authorization", "Bearer "+accessToken)
+
+	client := http.Client{Timeout: config.GetTrackLyricsRequestTimeout} //nolint:exhaustruct
+	resp, err := client.Do(req)
+	if nil != err {
+		switch {
+		case errutil.IsContext(ctx):
+			return "", ctx.Err()
+		case errors.Is(err, context.DeadlineExceeded):
+			return "", context.DeadlineExceeded
+		default:
+			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+			return "", flaw.From(fmt.Errorf("failed to send get track lyrics request: %v", err)).Append(flawP)
+		}
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); nil != closeErr {
+			flawP["err_debug_tree"] = errutil.Tree(closeErr).FlawP()
+			closeErr = flaw.From(fmt.Errorf("failed to close get track lyrics response body: %v", closeErr)).Append(flawP)
+			switch {
+			case nil == err:
+				err = closeErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context was ended")).Join(closeErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
+			case errors.Is(err, ErrTooManyRequests):
+				err = flaw.From(errors.New("too many requests")).Join(closeErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(closeErr)
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+	}()
+	flawP["response"] = errutil.HTTPResponseFlawPayload(resp)
+
+	switch code := resp.StatusCode; code {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return "", nil
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return "", err
+		}
+		flawP["response_body"] = string(respBytes)
+		return "", flaw.From(errors.New("received 401 response")).Append(flawP)
+	case http.StatusTooManyRequests:
+		return "", ErrTooManyRequests
+	case http.StatusForbidden:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return "", err
+		}
+		if ok, err := errutil.IsTooManyErrorResponse(resp, respBytes); nil != err {
+			flawP["response_body"] = string(respBytes)
+			return "", must.BeFlaw(err)
+		} else if ok {
+			return "", ErrTooManyRequests
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return "", flaw.From(errors.New("unexpected 403 response")).Append(flawP)
+	default:
+		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		if nil != err {
+			return "", err
+		}
+		flawP["response_body"] = string(respBytes)
+		return "", flaw.From(fmt.Errorf("unexpected status code: %d", code)).Append(flawP)
+	}
+
+	respBytes, err := httputil.ReadResponseBody(ctx, resp)
+	if nil != err {
+		return "", err
+	}
+
+	if !gjson.ValidBytes(respBytes) {
+		flawP["response_body"] = string(respBytes)
+		return "", flaw.From(fmt.Errorf("invalid track lyrics response json: %v", err)).Append(flawP)
+	}
+
+	var lyrics string
+	switch lyricsKey := gjson.GetBytes(respBytes, "subtitles"); lyricsKey.Type { //nolint:exhaustive
+	case gjson.String:
+		lyrics = lyricsKey.Str
+	default:
+		flawP["response_body"] = string(respBytes)
+		return "", flaw.From(fmt.Errorf("unexpected track lyrics response: %v", err)).Append(flawP)
+	}
+
+	return lyrics, nil
+}
+
 type TrackCreditsResponse []struct {
 	Type         string `json:"type"`
 	Contributors []struct {
@@ -332,9 +459,12 @@ type TrackEmbeddedAttrs struct {
 	ReleaseDate  time.Time
 	Title        string
 	TrackNumber  int
+	TotalTracks  int
 	Version      *string
 	VolumeNumber int
+	TotalVolumes int
 	Credits      tidal.TrackCredits
+	Lyrics       string
 }
 
 func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackEmbeddedAttrs) (err error) {
@@ -342,34 +472,37 @@ func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs Track
 	trackFilePathWithExt := trackFilePath + "." + ext
 
 	metaTags := []string{
-		"ARTIST=" + tidal.JoinArtists(attrs.Artists),
-		"LEAD_PERFORMER=" + attrs.LeadArtist,
-		"TITLE=" + attrs.Title,
-		"ALBUM=" + attrs.Album,
-		"ALBUMARTIST=" + attrs.AlbumArtist,
-		"COPYRIGHT=" + attrs.Copyright,
-		"ISRC=" + attrs.ISRC,
-		"TRACKNUMBER=" + strconv.Itoa(attrs.TrackNumber),
-		"DISCNUMBER=" + strconv.Itoa(attrs.VolumeNumber),
-		"DATE=" + attrs.ReleaseDate.Format(time.DateOnly),
-		"YEAR=" + strconv.Itoa(attrs.ReleaseDate.Year()),
+		"artist=" + tidal.JoinArtists(attrs.Artists),
+		"lead_performer=" + attrs.LeadArtist,
+		"title=" + attrs.Title,
+		"album=" + attrs.Album,
+		"album_artist=" + attrs.AlbumArtist,
+		"copyright=" + attrs.Copyright,
+		"isrc=" + attrs.ISRC,
+		"track=" + strconv.Itoa(attrs.TrackNumber),
+		"tracktotal=" + strconv.Itoa(attrs.TotalTracks),
+		"disc=" + strconv.Itoa(attrs.VolumeNumber),
+		"disctotal=" + strconv.Itoa(attrs.TotalVolumes),
+		"date=" + attrs.ReleaseDate.Format(time.DateOnly),
+		"year=" + strconv.Itoa(attrs.ReleaseDate.Year()),
+		"lyrics=" + lo.Ternary(len(attrs.Lyrics) == 0, "", attrs.Lyrics),
 	}
 
 	if len(attrs.Credits.Composers) > 0 {
-		metaTags = append(metaTags, "COMPOSER="+tidal.JoinNames(attrs.Credits.Composers))
+		metaTags = append(metaTags, "composer="+tidal.JoinNames(attrs.Credits.Composers))
 	}
 	if len(attrs.Credits.Lyricists) > 0 {
-		metaTags = append(metaTags, "LYRICIST="+tidal.JoinNames(attrs.Credits.Lyricists))
+		metaTags = append(metaTags, "lyricist="+tidal.JoinNames(attrs.Credits.Lyricists))
 	}
 	if len(attrs.Credits.Producers) > 0 {
-		metaTags = append(metaTags, "PRODUCER="+tidal.JoinNames(attrs.Credits.Producers))
+		metaTags = append(metaTags, "producer="+tidal.JoinNames(attrs.Credits.Producers))
 	}
 	if len(attrs.Credits.AdditionalProducers) > 0 {
-		metaTags = append(metaTags, "COPRODUCER="+tidal.JoinNames(attrs.Credits.AdditionalProducers))
+		metaTags = append(metaTags, "coproducer="+tidal.JoinNames(attrs.Credits.AdditionalProducers))
 	}
 
 	if nil != attrs.Version {
-		metaTags = append(metaTags, "VERSION="+*attrs.Version)
+		metaTags = append(metaTags, "version="+*attrs.Version)
 	}
 
 	metaArgs := make([]string, 0, len(metaTags)*2)
@@ -731,7 +864,7 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (m *tidal.Album
 	}
 	req.Header.Add("Authorization", "Bearer "+accessToken)
 
-	client := http.Client{Timeout: config.AlbumInfoRequestTimeout} //nolint:exhaustruct
+	client := http.Client{Timeout: config.AlbumMetaRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
@@ -801,9 +934,11 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (m *tidal.Album
 		Artist struct {
 			Name string `json:"name"`
 		} `json:"artist"`
-		Title       string `json:"title"`
-		ReleaseDate string `json:"releaseDate"`
-		CoverID     string `json:"cover"`
+		Title        string `json:"title"`
+		ReleaseDate  string `json:"releaseDate"`
+		CoverID      string `json:"cover"`
+		TotalTracks  int    `json:"numberOfTracks"`
+		TotalVolumes int    `json:"numberOfVolumes"`
 	}
 	if err := json.Unmarshal(respBytes, &respBody); nil != err {
 		flawP["response_body"] = string(respBytes)
@@ -818,10 +953,12 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (m *tidal.Album
 	}
 
 	return &tidal.AlbumMeta{
-		Artist:      respBody.Artist.Name,
-		Title:       respBody.Title,
-		ReleaseDate: releaseDate,
-		CoverID:     respBody.CoverID,
+		Artist:       respBody.Artist.Name,
+		Title:        respBody.Title,
+		ReleaseDate:  releaseDate,
+		CoverID:      respBody.CoverID,
+		TotalTracks:  respBody.TotalTracks,
+		TotalVolumes: respBody.TotalVolumes,
 	}, nil
 }
 
@@ -1117,12 +1254,17 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 							"err_debug_tree": errutil.Tree(removeErr).FlawP(),
 							"path":           trackFs.Path,
 						}
-						err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
+						err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Join(err).Append(flawP)
 					}
 				}
 			}()
 
 			trackCredits, err := d.getTrackCredits(ctx, track.ID)
+			if nil != err {
+				return err
+			}
+
+			trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
 			if nil != err {
 				return err
 			}
@@ -1149,9 +1291,12 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				ReleaseDate:  album.ReleaseDate,
 				Title:        track.Title,
 				TrackNumber:  track.TrackNumber,
+				TotalTracks:  album.TotalTracks,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
+				TotalVolumes: album.TotalVolumes,
 				Credits:      *trackCredits,
+				Lyrics:       trackLyrics,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1221,7 +1366,7 @@ func getPlaylistMeta(ctx context.Context, accessToken, id string) (m *PlaylistMe
 	}
 	req.Header.Add("Authorization", "Bearer "+accessToken)
 
-	client := http.Client{Timeout: config.PlaylistInfoRequestTimeout} //nolint:exhaustruct
+	client := http.Client{Timeout: config.PlaylistMetaRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
@@ -1521,6 +1666,11 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				return err
 			}
 
+			trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+			if nil != err {
+				return err
+			}
+
 			format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
 			if nil != err {
 				return err
@@ -1543,9 +1693,12 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				ReleaseDate:  album.ReleaseDate,
 				Title:        track.Title,
 				TrackNumber:  track.TrackNumber,
+				TotalTracks:  album.TotalTracks,
 				Version:      track.Version,
 				VolumeNumber: track.VolumeNumber,
+				TotalVolumes: album.TotalVolumes,
 				Credits:      *trackCredits,
+				Lyrics:       trackLyrics,
 			}
 			if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 				return err
@@ -1614,7 +1767,7 @@ func getMixMeta(ctx context.Context, accessToken, id string) (m *MixMeta, err er
 	req.Header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0")
 	req.Header.Add("Accept", "application/json")
 
-	client := http.Client{Timeout: config.MixInfoRequestTimeout} //nolint:exhaustruct
+	client := http.Client{Timeout: config.MixMetaRequestTimeout} //nolint:exhaustruct
 	resp, err := client.Do(req)
 	if nil != err {
 		switch {
@@ -1680,6 +1833,7 @@ func getMixMeta(ctx context.Context, accessToken, id string) (m *MixMeta, err er
 	if nil != err {
 		return nil, err
 	}
+
 	if !gjson.ValidBytes(respBytes) {
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(fmt.Errorf("invalid mix info response json: %v", err)).Append(flawP)
@@ -1894,10 +2048,15 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 								"err_debug_tree": errutil.Tree(removeErr).FlawP(),
 								"path":           trackFs.Path,
 							}
-							err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
+							err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Join(err).Append(flawP)
 						}
 					}
 				}()
+
+				trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+				if nil != err {
+					return err
+				}
 
 				format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
 				if nil != err {
@@ -1916,9 +2075,12 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					ReleaseDate:  album.ReleaseDate,
 					Title:        track.Title,
 					TrackNumber:  track.TrackNumber,
+					TotalTracks:  album.TotalTracks,
 					Version:      track.Version,
 					VolumeNumber: track.VolumeNumber,
+					TotalVolumes: album.TotalVolumes,
 					Credits:      track.Credits,
+					Lyrics:       trackLyrics,
 				}
 				if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 					return err
