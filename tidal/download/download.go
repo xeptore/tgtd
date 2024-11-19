@@ -2051,6 +2051,11 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					}
 				}()
 
+				trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+				if nil != err {
+					return err
+				}
+
 				format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
 				if nil != err {
 					return err
@@ -2068,9 +2073,12 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					ReleaseDate:  album.ReleaseDate,
 					Title:        track.Title,
 					TrackNumber:  track.TrackNumber,
+					TotalTracks:  album.TotalTracks,
 					Version:      track.Version,
 					VolumeNumber: track.VolumeNumber,
+					TotalVolumes: album.TotalVolumes,
 					Credits:      track.Credits,
+					Lyrics:       trackLyrics,
 				}
 				if err := embedTrackAttributes(ctx, trackFs.Path, attrs); nil != err {
 					return err
