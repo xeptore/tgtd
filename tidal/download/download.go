@@ -1252,7 +1252,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 							"err_debug_tree": errutil.Tree(removeErr).FlawP(),
 							"path":           trackFs.Path,
 						}
-						err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
+						err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Join(err).Append(flawP)
 					}
 				}
 			}()
@@ -2046,7 +2046,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 								"err_debug_tree": errutil.Tree(removeErr).FlawP(),
 								"path":           trackFs.Path,
 							}
-							err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
+							err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Join(err).Append(flawP)
 						}
 					}
 				}()
