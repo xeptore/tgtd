@@ -74,7 +74,7 @@ func NewDownloader(
 	}
 }
 
-func (d *Downloader) Single(ctx context.Context, id string) error {
+func (d *Downloader) Single(ctx context.Context, id string) (err error) {
 	track, err := getSingleTrackMeta(ctx, d.accessToken, id)
 	if nil != err {
 		return err
@@ -338,18 +338,6 @@ type TrackEmbeddedAttrs struct {
 }
 
 func embedTrackAttributes(ctx context.Context, trackFilePath string, attrs TrackEmbeddedAttrs) (err error) {
-	defer func() {
-		if nil != err {
-			if removeErr := os.Remove(trackFilePath); nil != removeErr {
-				flawP := flaw.P{
-					"err_debug_tree":  errutil.Tree(removeErr).FlawP(),
-					"track_file_path": trackFilePath,
-				}
-				err = flaw.From(fmt.Errorf("failed to remove original track file: %v", removeErr)).Join(err).Append(flawP)
-			}
-		}
-	}()
-
 	ext := attrs.Format.InferTrackExt()
 	trackFilePathWithExt := trackFilePath + "." + ext
 

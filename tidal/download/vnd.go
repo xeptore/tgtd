@@ -38,7 +38,7 @@ func (d *VndTrackStream) saveTo(ctx context.Context, accessToken string, fileNam
 	loopFlawPs := make([]flaw.P, numBatches)
 	flawP := flaw.P{"download_loop_flaw_ps": loopFlawPs, "num_batches": numBatches}
 	for i := range numBatches {
-		wg.Go(func() error {
+		wg.Go(func() (err error) {
 			start := i * singlePartChunkSize
 			end := min((i+1)*singlePartChunkSize-1, fileSize)
 			loopFlawP := flaw.P{"start": start, "end": end}
