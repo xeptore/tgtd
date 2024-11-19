@@ -19,7 +19,6 @@ import (
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ratelimit"
-	"github.com/xeptore/tgtd/sliceutil"
 	"github.com/xeptore/tgtd/tidal"
 	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
@@ -32,25 +31,30 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 		return err
 	}
 
-	for volIdx, tracks := range info.Volumes {
-		volNum := volIdx + 1
-
-		batchSize := mathutil.OptimalAlbumSize(len(tracks))
-		numBatches := mathutil.CeilInts(len(tracks), batchSize)
-		loopFlawPs := make([]flaw.P, numBatches)
-		flawP := flaw.P{"loop_payloads": loopFlawPs}
-
-		batches := iterutil.WithIndex(slices.Chunk(tracks, batchSize))
-		for i, batch := range batches {
+	for volIdx, trackIDs := range info.VolumeTrackIDs {
+		var (
+			volNum     = volIdx + 1
+			batchSize  = mathutil.OptimalAlbumSize(len(trackIDs))
+			numBatches = mathutil.CeilInts(len(trackIDs), batchSize)
+			loopFlawPs = make([]flaw.P, numBatches)
+			flawP      = flaw.P{"loop_payloads": loopFlawPs}
+			batches    = iterutil.WithIndex(slices.Chunk(trackIDs, batchSize))
+		)
+		for i, trackIDs := range batches {
 			caption := []styling.StyledTextOption{
 				styling.Plain(info.Caption),
 				styling.Plain("\n"),
 				styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 			}
 
-			items := sliceutil.Map(batch, func(track tidalfs.StoredAlbumVolumeTrack) TrackUploadInfo {
-				trackFs := albumFs.Track(volNum, track.ID)
-				return TrackUploadInfo{
+			items := make([]TrackUploadInfo, len(trackIDs))
+			for i, trackID := range trackIDs {
+				trackFs := albumFs.Track(volNum, trackID)
+				track, err := trackFs.InfoFile.Read()
+				if nil != err {
+					return err
+				}
+				info := TrackUploadInfo{
 					FilePath:   trackFs.Path,
 					ArtistName: tidal.JoinArtists(track.Artists),
 					Title:      track.Title,
@@ -60,7 +64,8 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 					CoverID:    track.CoverID,
 					CoverPath:  albumFs.Cover.Path,
 				}
-			})
+				items[i] = info
+			}
 
 			if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
 				if errutil.IsContext(ctx) {
@@ -81,20 +86,26 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 		return err
 	}
 
-	batchSize := mathutil.OptimalAlbumSize(len(info.Tracks))
-	batches := iterutil.WithIndex(slices.Chunk(info.Tracks, batchSize))
-	numBatches := mathutil.CeilInts(len(info.Tracks), batchSize)
-
-	for i, batch := range batches {
+	var (
+		batchSize  = mathutil.OptimalAlbumSize(len(info.TrackIDs))
+		batches    = iterutil.WithIndex(slices.Chunk(info.TrackIDs, batchSize))
+		numBatches = mathutil.CeilInts(len(info.TrackIDs), batchSize)
+	)
+	for i, trackIDs := range batches {
 		caption := []styling.StyledTextOption{
 			styling.Plain(info.Caption),
 			styling.Plain("\n"),
 			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
 
-		items := sliceutil.Map(batch, func(track tidalfs.StoredPlaylistTrack) TrackUploadInfo {
-			trackFs := playlistFs.Track(track.ID)
-			return TrackUploadInfo{
+		items := make([]TrackUploadInfo, len(trackIDs))
+		for i, trackID := range trackIDs {
+			trackFs := playlistFs.Track(trackID)
+			track, err := trackFs.InfoFile.Read()
+			if nil != err {
+				return err
+			}
+			info := TrackUploadInfo{
 				FilePath:   trackFs.Path,
 				ArtistName: tidal.JoinArtists(track.Artists),
 				Title:      track.Title,
@@ -104,7 +115,8 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 				CoverID:    track.CoverID,
 				CoverPath:  trackFs.Cover.Path,
 			}
-		})
+			items[i] = info
+		}
 
 		if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
 			if errutil.IsContext(ctx) {
@@ -124,20 +136,26 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 		return err
 	}
 
-	batchSize := mathutil.OptimalAlbumSize(len(info.Tracks))
-	batches := iterutil.WithIndex(slices.Chunk(info.Tracks, batchSize))
-	numBatches := mathutil.CeilInts(len(info.Tracks), batchSize)
-
-	for i, batch := range batches {
+	var (
+		batchSize  = mathutil.OptimalAlbumSize(len(info.TrackIDs))
+		batches    = iterutil.WithIndex(slices.Chunk(info.TrackIDs, batchSize))
+		numBatches = mathutil.CeilInts(len(info.TrackIDs), batchSize)
+	)
+	for i, trackIDs := range batches {
 		caption := []styling.StyledTextOption{
 			styling.Plain(info.Caption),
 			styling.Plain("\n"),
 			styling.Italic(fmt.Sprintf("Part: %d/%d", i+1, numBatches)),
 		}
 
-		items := sliceutil.Map(batch, func(track tidalfs.StoredMixTrack) TrackUploadInfo {
-			trackFs := mixFs.Track(track.ID)
-			return TrackUploadInfo{
+		items := make([]TrackUploadInfo, len(trackIDs))
+		for i, trackID := range trackIDs {
+			trackFs := mixFs.Track(trackID)
+			track, err := trackFs.InfoFile.Read()
+			if nil != err {
+				return err
+			}
+			info := TrackUploadInfo{
 				FilePath:   trackFs.Path,
 				ArtistName: tidal.JoinArtists(track.Artists),
 				Title:      track.Title,
@@ -147,7 +165,8 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 				CoverID:    track.CoverID,
 				CoverPath:  trackFs.Cover.Path,
 			}
-		})
+			items[i] = info
+		}
 
 		if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
 			if errutil.IsContext(ctx) {
@@ -160,9 +179,10 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 }
 
 func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
-	album := make([]message.MultiMediaOption, len(batch))
-
-	flawP := make(flaw.P)
+	var (
+		album = make([]message.MultiMediaOption, len(batch))
+		flawP = make(flaw.P)
+	)
 
 	up, cancel := w.newUploader(ctx)
 	defer func() {
@@ -237,7 +257,7 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 		return err
 	}
 
-	flawP := make(flaw.P)
+	flawP := flaw.P{}
 
 	up, cancel := w.newUploader(ctx)
 	defer func() {
@@ -257,11 +277,7 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 		}
 	}()
 
-	caption := []styling.StyledTextOption{
-		styling.Plain(info.Album.Title),
-		styling.Plain(" "),
-		styling.Plain(fmt.Sprintf("(%s)", info.Album.ReleaseDate)),
-	}
+	caption := []styling.StyledTextOption{styling.Plain(info.Caption)}
 	uploadInfo := TrackUploadInfo{
 		FilePath:   trackFs.Path,
 		ArtistName: tidal.JoinArtists(info.Artists),
