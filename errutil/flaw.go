@@ -90,7 +90,7 @@ func FlawToYAML(f *flaw.Flaw) ([]byte, error) {
 		StackTrace:   stackTraces,
 	}
 	var buf bytes.Buffer
-	if err := yaml.NewEncoder(&buf).Encode(fl); err != nil {
+	if err := yaml.NewEncoder(&buf).Encode(fl); nil != err {
 		flawP := flaw.P{"err_debug_tree": Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to encode flaw to yaml: %v", err)).Append(flawP)
 	}

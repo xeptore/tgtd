@@ -6,7 +6,7 @@ type Of[T any] struct {
 }
 
 func (r Of[T]) Unwrap() *T {
-	if r.err != nil {
+	if nil != r.err {
 		panic("cannot get value of error result")
 	}
 	return r.v

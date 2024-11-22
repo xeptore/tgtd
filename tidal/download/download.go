@@ -101,7 +101,7 @@ func (d *Downloader) Single(ctx context.Context, id string) (err error) {
 		return nil
 	}
 	defer func() {
-		if err != nil {
+		if nil != err {
 			if removeErr := trackFs.Remove(); nil != removeErr {
 				flawP := flaw.P{
 					"err_debug_tree":  errutil.Tree(removeErr).FlawP(),
