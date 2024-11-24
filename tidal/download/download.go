@@ -403,10 +403,11 @@ func fetchTrackLyrics(ctx context.Context, accessToken string, id string) (l str
 	}
 
 	var lyrics string
-	switch lyricsKey := gjson.GetBytes(respBytes, "subtitles"); lyricsKey.Type { //nolint:exhaustive
-	case gjson.String:
+	if lyricsKey := gjson.GetBytes(respBytes, "subtitles"); lyricsKey.Type == gjson.String {
 		lyrics = lyricsKey.Str
-	default:
+	} else if lyricsKey := gjson.GetBytes(respBytes, "lyrics"); lyricsKey.Type == gjson.String {
+		lyrics = lyricsKey.Str
+	} else {
 		flawP["response_body"] = string(respBytes)
 		return "", flaw.From(fmt.Errorf("unexpected track lyrics response: %v", err)).Append(flawP)
 	}
