@@ -65,6 +65,15 @@ func (a *Auth) AccessToken(ctx context.Context) (string, error) {
 	return a.creds.AccessToken, nil
 }
 
+func (a *Auth) RefreshToken(ctx context.Context) error {
+	creds, err := handleUnauthorized(ctx, a.creds.RefreshToken, a.file)
+	if nil != err {
+		return err
+	}
+	a.creds = *creds
+	return nil
+}
+
 func LoadFromDir(ctx context.Context, credsDir string) (*Auth, error) {
 	tokenFile := tidalfs.AuthTokenFileFrom(credsDir, tokenFileName)
 	creds, err := load(ctx, tokenFile)
