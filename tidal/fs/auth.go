@@ -24,9 +24,9 @@ func AuthTokenFileFrom(dir, filename string) AuthTokenFile {
 }
 
 type AuthTokenFileContent struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresAt    int64  `json:"expires_at"`
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresAt    int64  `json:"expiresAt"`
 }
 
 func (f AuthTokenFile) Read() (c *AuthTokenFileContent, err error) {
@@ -51,7 +51,9 @@ func (f AuthTokenFile) Read() (c *AuthTokenFileContent, err error) {
 		}
 	}()
 
-	if err := json.NewDecoder(file).Decode(&c); nil != err {
+	dec := json.NewDecoder(file)
+	dec.DisallowUnknownFields()
+	if err := dec.DecodeWithOption(&c, json.DecodeFieldPriorityFirstWin()); nil != err {
 		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err)).Append(flawP)
 	}
