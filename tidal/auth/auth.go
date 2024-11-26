@@ -45,7 +45,7 @@ type Auth struct {
 }
 
 func authFromDir(dir string) *Auth {
-	return &Auth{dir: dir}
+	return &Auth{dir: dir, creds: Credentials{}}
 }
 
 func (a *Auth) tokenFilePath() string {
