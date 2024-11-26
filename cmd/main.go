@@ -784,7 +784,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 
 	dl := tidaldl.NewDownloader(
 		downloadBaseDir,
-		w.tidalAuth.Creds.AccessToken,
+		w.tidalAuth,
 		&w.cache.AlbumsMeta,
 		&w.cache.DownloadedCovers,
 		&w.cache.TrackCredits,

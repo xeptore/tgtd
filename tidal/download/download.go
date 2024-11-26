@@ -52,9 +52,13 @@ const (
 
 var ErrTooManyRequests = errors.New("too many requests")
 
+type Auth interface {
+	AccessToken() (string, error)
+}
+
 type Downloader struct {
 	dir                   fs.DownloadDir
-	accessToken           string
+	auth                  Auth
 	albumsMetaCache       *cache.AlbumsMetaCache
 	downloadedCoversCache *cache.DownloadedCoversCache
 	trackCreditsCache     *cache.TrackCreditsCache
@@ -62,14 +66,14 @@ type Downloader struct {
 
 func NewDownloader(
 	dir fs.DownloadDir,
-	accessToken string,
+	auth Auth,
 	albumsMetaCache *cache.AlbumsMetaCache,
 	downloadedCoversCache *cache.DownloadedCoversCache,
 	trackCreditsCache *cache.TrackCreditsCache,
 ) *Downloader {
 	return &Downloader{
 		dir:                   dir,
-		accessToken:           accessToken,
+		auth:                  auth,
 		albumsMetaCache:       albumsMetaCache,
 		downloadedCoversCache: downloadedCoversCache,
 		trackCreditsCache:     trackCreditsCache,
@@ -77,7 +81,12 @@ func NewDownloader(
 }
 
 func (d *Downloader) Single(ctx context.Context, id string) (err error) {
-	track, err := getSingleTrackMeta(ctx, d.accessToken, id)
+	accessToken, err := d.auth.AccessToken()
+	if nil != err {
+		return err
+	}
+
+	track, err := getSingleTrackMeta(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
@@ -86,7 +95,7 @@ func (d *Downloader) Single(ctx context.Context, id string) (err error) {
 	if exists, err := trackFs.Cover.Exists(); nil != err {
 		return err
 	} else if !exists {
-		coverBytes, err := d.getCover(ctx, track.CoverID)
+		coverBytes, err := d.getCover(ctx, accessToken, track.CoverID)
 		if nil != err {
 			return err
 		}
@@ -112,22 +121,22 @@ func (d *Downloader) Single(ctx context.Context, id string) (err error) {
 		}
 	}()
 
-	format, err := downloadTrack(ctx, d.accessToken, id, trackFs.Path)
+	format, err := downloadTrack(ctx, accessToken, id, trackFs.Path)
 	if nil != err {
 		return err
 	}
 
-	trackCredits, err := d.getTrackCredits(ctx, id)
+	trackCredits, err := d.getTrackCredits(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
 
-	trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+	trackLyrics, err := fetchTrackLyrics(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
 
-	album, err := d.getAlbumMeta(ctx, track.AlbumID)
+	album, err := d.getAlbumMeta(ctx, accessToken, track.AlbumID)
 	if nil != err {
 		return err
 	}
@@ -177,11 +186,11 @@ func trackCaption(album tidal.AlbumMeta) string {
 	return fmt.Sprintf("%s (%s)", album.Title, album.ReleaseDate.Format(tidal.ReleaseDateLayout))
 }
 
-func (d *Downloader) getTrackCredits(ctx context.Context, id string) (*tidal.TrackCredits, error) {
+func (d *Downloader) getTrackCredits(ctx context.Context, accessToken, id string) (*tidal.TrackCredits, error) {
 	cachedTrackCredits, err := d.trackCreditsCache.Fetch(
 		id,
 		cache.DefaultTrackCreditsTTL,
-		func() (*tidal.TrackCredits, error) { return fetchTrackCredits(ctx, d.accessToken, id) },
+		func() (*tidal.TrackCredits, error) { return fetchTrackCredits(ctx, accessToken, id) },
 	)
 	if nil != err {
 		return nil, err
@@ -716,11 +725,11 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (m *SingleT
 	return &track, nil
 }
 
-func (d *Downloader) getCover(ctx context.Context, coverID string) (b []byte, err error) {
+func (d *Downloader) getCover(ctx context.Context, accessToken, coverID string) (b []byte, err error) {
 	cachedCoverBytes, err := d.downloadedCoversCache.Fetch(
 		coverID,
 		cache.DefaultDownloadedCoverTTL,
-		func() ([]byte, error) { return downloadCover(ctx, d.accessToken, coverID) },
+		func() ([]byte, error) { return downloadCover(ctx, accessToken, coverID) },
 	)
 	if nil != err {
 		return nil, err
@@ -823,11 +832,11 @@ func downloadCover(ctx context.Context, accessToken, coverID string) (b []byte, 
 	return respBytes, nil
 }
 
-func (d *Downloader) getAlbumMeta(ctx context.Context, id string) (*tidal.AlbumMeta, error) {
+func (d *Downloader) getAlbumMeta(ctx context.Context, accessToken, id string) (*tidal.AlbumMeta, error) {
 	cachedAlbumMeta, err := d.albumsMetaCache.Fetch(
 		id,
 		cache.DefaultAlbumTTL,
-		func() (*tidal.AlbumMeta, error) { return fetchAlbumMeta(ctx, d.accessToken, id) },
+		func() (*tidal.AlbumMeta, error) { return fetchAlbumMeta(ctx, accessToken, id) },
 	)
 	if nil != err {
 		return nil, err
@@ -1212,12 +1221,17 @@ type ListTrackMeta struct {
 }
 
 func (d *Downloader) Playlist(ctx context.Context, id string) error {
-	playlist, err := getPlaylistMeta(ctx, d.accessToken, id)
+	accessToken, err := d.auth.AccessToken()
 	if nil != err {
 		return err
 	}
 
-	tracks, err := getPlaylistTracks(ctx, d.accessToken, id)
+	playlist, err := getPlaylistMeta(ctx, accessToken, id)
+	if nil != err {
+		return err
+	}
+
+	tracks, err := getPlaylistTracks(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
@@ -1234,7 +1248,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 			if exists, err := trackFs.Cover.Exists(); nil != err {
 				return err
 			} else if !exists {
-				coverBytes, err := d.getCover(ctx, track.CoverID)
+				coverBytes, err := d.getCover(ctx, accessToken, track.CoverID)
 				if nil != err {
 					return err
 				}
@@ -1260,22 +1274,22 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				}
 			}()
 
-			trackCredits, err := d.getTrackCredits(ctx, track.ID)
+			trackCredits, err := d.getTrackCredits(ctx, accessToken, track.ID)
 			if nil != err {
 				return err
 			}
 
-			trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+			trackLyrics, err := fetchTrackLyrics(ctx, accessToken, id)
 			if nil != err {
 				return err
 			}
 
-			format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
+			format, err := downloadTrack(wgCtx, accessToken, track.ID, trackFs.Path)
 			if nil != err {
 				return err
 			}
 
-			album, err := d.getAlbumMeta(ctx, track.AlbumID)
+			album, err := d.getAlbumMeta(ctx, accessToken, track.AlbumID)
 			if nil != err {
 				return err
 			}
@@ -1615,14 +1629,19 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 }
 
 func (d *Downloader) Mix(ctx context.Context, id string) error {
-	flawP := flaw.P{}
-
-	mix, err := getMixMeta(ctx, d.accessToken, id)
+	accessToken, err := d.auth.AccessToken()
 	if nil != err {
 		return err
 	}
 
-	tracks, err := getMixTracks(ctx, d.accessToken, id)
+	flawP := flaw.P{}
+
+	mix, err := getMixMeta(ctx, accessToken, id)
+	if nil != err {
+		return err
+	}
+
+	tracks, err := getMixTracks(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
@@ -1639,7 +1658,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 			if exists, err := trackFs.Cover.Exists(); nil != err {
 				return err
 			} else if !exists {
-				coverBytes, err := d.getCover(ctx, track.CoverID)
+				coverBytes, err := d.getCover(ctx, accessToken, track.CoverID)
 				if nil != err {
 					return err
 				}
@@ -1662,22 +1681,22 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				}
 			}()
 
-			trackCredits, err := d.getTrackCredits(ctx, track.ID)
+			trackCredits, err := d.getTrackCredits(ctx, accessToken, track.ID)
 			if nil != err {
 				return err
 			}
 
-			trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+			trackLyrics, err := fetchTrackLyrics(ctx, accessToken, id)
 			if nil != err {
 				return err
 			}
 
-			format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
+			format, err := downloadTrack(wgCtx, accessToken, track.ID, trackFs.Path)
 			if nil != err {
 				return err
 			}
 
-			album, err := d.getAlbumMeta(ctx, track.AlbumID)
+			album, err := d.getAlbumMeta(ctx, accessToken, track.AlbumID)
 			if nil != err {
 				return err
 			}
@@ -1995,7 +2014,12 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 }
 
 func (d *Downloader) Album(ctx context.Context, id string) error {
-	album, err := d.getAlbumMeta(ctx, id)
+	accessToken, err := d.auth.AccessToken()
+	if nil != err {
+		return err
+	}
+
+	album, err := d.getAlbumMeta(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
@@ -2004,7 +2028,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 	if exists, err := albumFs.Cover.Exists(); nil != err {
 		return err
 	} else if !exists {
-		coverBytes, err := d.getCover(ctx, album.CoverID)
+		coverBytes, err := d.getCover(ctx, accessToken, album.CoverID)
 		if nil != err {
 			return err
 		}
@@ -2013,7 +2037,7 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 		}
 	}
 
-	volumes, err := getAlbumVolumes(ctx, d.accessToken, id)
+	volumes, err := getAlbumVolumes(ctx, accessToken, id)
 	if nil != err {
 		return err
 	}
@@ -2054,12 +2078,12 @@ func (d *Downloader) Album(ctx context.Context, id string) error {
 					}
 				}()
 
-				trackLyrics, err := fetchTrackLyrics(ctx, d.accessToken, id)
+				trackLyrics, err := fetchTrackLyrics(ctx, accessToken, id)
 				if nil != err {
 					return err
 				}
 
-				format, err := downloadTrack(wgCtx, d.accessToken, track.ID, trackFs.Path)
+				format, err := downloadTrack(wgCtx, accessToken, track.ID, trackFs.Path)
 				if nil != err {
 					return err
 				}

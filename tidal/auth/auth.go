@@ -40,15 +40,26 @@ type Credentials struct {
 }
 
 type Auth struct {
-	Creds Credentials
+	creds Credentials
+}
+
+func tokenFilePath(dir string) string {
+	return filepath.Join(dir, tokenFileName)
+}
+
+func (a *Auth) AccessToken() (string, error) {
+	if time.Now().After(time.Unix(a.creds.ExpiresAt, 0)) {
+		return "", ErrUnauthorized
+	}
+	return a.creds.AccessToken, nil
 }
 
 func Load(ctx context.Context, credsDir string) (*Auth, error) {
-	creds, err := load(ctx, filepath.Join(credsDir, tokenFileName))
+	creds, err := load(ctx, tokenFilePath(credsDir))
 	if nil != err {
 		return nil, err
 	}
-	return &Auth{Creds: *creds}, nil
+	return &Auth{creds: *creds}, nil
 }
 
 type File struct {
@@ -304,7 +315,7 @@ func extractExpiresAt(accessToken string) (int64, error) {
 }
 
 func (a *Auth) VerifyAccessToken(ctx context.Context) error {
-	return verifyAccessToken(ctx, a.Creds.AccessToken)
+	return verifyAccessToken(ctx, a.creds.AccessToken)
 }
 
 func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
@@ -450,12 +461,12 @@ func NewAuthorizer(ctx context.Context, credsDir string) (link *AuthorizationRes
 				}
 				f := File(*creds)
 				flawP := flaw.P{"creds": f.flawP()}
-				if err := save(f, filepath.Join(credsDir, tokenFileName)); nil != err {
+				if err := save(f, tokenFilePath(credsDir)); nil != err {
 					flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 					done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
 					return
 				}
-				done <- result.Ok(&Auth{Creds: *creds})
+				done <- result.Ok(&Auth{creds: *creds})
 				return
 			}
 		}
