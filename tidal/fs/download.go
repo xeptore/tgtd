@@ -15,7 +15,7 @@ import (
 
 type DownloadDir string
 
-func From(d string) DownloadDir {
+func DownloadDirFrom(d string) DownloadDir {
 	return DownloadDir(d)
 }
 

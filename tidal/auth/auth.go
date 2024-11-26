@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ptr"
 	"github.com/xeptore/tgtd/result"
+	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
 
 const (
@@ -39,31 +39,26 @@ type Credentials struct {
 	ExpiresAt    int64
 }
 
+func credentialsFromTokenFileContent(content tidalfs.AuthTokenFileContent) Credentials {
+	return Credentials{
+		AccessToken:  content.AccessToken,
+		RefreshToken: content.RefreshToken,
+		ExpiresAt:    content.ExpiresAt,
+	}
+}
+
 type Auth struct {
-	dir   string
+	file  tidalfs.AuthTokenFile
 	creds Credentials
-}
-
-func authFromDir(dir string) *Auth {
-	return &Auth{dir: dir, creds: Credentials{}}
-}
-
-func (a *Auth) tokenFilePath() string {
-	return filepath.Join(a.dir, tokenFileName)
-}
-
-func (a *Auth) withCreds(creds Credentials) *Auth {
-	a.creds = creds
-	return a
 }
 
 func (a *Auth) AccessToken(ctx context.Context) (string, error) {
 	if time.Now().After(time.Unix(a.creds.ExpiresAt, 0)) {
-		creds, err := handleUnauthorized(ctx, a.creds.RefreshToken, a.tokenFilePath())
+		creds, err := handleUnauthorized(ctx, a.creds.RefreshToken, a.file)
 		if nil != err {
 			return "", err
 		}
-		a.withCreds(*creds)
+		a.creds = *creds
 		return a.creds.AccessToken, nil
 	}
 
@@ -71,64 +66,28 @@ func (a *Auth) AccessToken(ctx context.Context) (string, error) {
 }
 
 func LoadFromDir(ctx context.Context, credsDir string) (*Auth, error) {
-	a := authFromDir(credsDir)
-	creds, err := load(ctx, a.tokenFilePath())
+	tokenFile := tidalfs.AuthTokenFileFrom(credsDir, tokenFileName)
+	creds, err := load(ctx, tokenFile)
 	if nil != err {
 		return nil, err
 	}
-	return a.withCreds(*creds), nil
+	return &Auth{
+		file:  tokenFile,
+		creds: *creds,
+	}, nil
 }
 
-type File struct {
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
-	ExpiresAt    int64  `json:"expiresAt"`
-}
-
-func (f File) flawP() flaw.P {
-	return flaw.P{
-		"access_token":  f.AccessToken,
-		"refresh_token": f.RefreshToken,
-		"expires_at":    f.ExpiresAt,
-	}
-}
-
-func load(ctx context.Context, tokenFilePath string) (creds *Credentials, err error) {
-	f, err := os.OpenFile(tokenFilePath, os.O_RDONLY, 0o0600)
+func load(ctx context.Context, tokenFile tidalfs.AuthTokenFile) (creds *Credentials, err error) {
+	content, err := tokenFile.Read()
 	if nil != err {
-		if !errors.Is(err, os.ErrNotExist) {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-			return nil, flaw.From(fmt.Errorf("failed to open token file: %v", err)).Append(flawP)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrUnauthorized
 		}
-		return nil, ErrUnauthorized
-	}
-	defer func() {
-		if closeErr := f.Close(); nil != closeErr {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
-			closeErr = flaw.From(fmt.Errorf("failed to close token file: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = closeErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context was ended")).Join(closeErr)
-			case errors.Is(err, context.DeadlineExceeded):
-				err = flaw.From(errors.New("timeout has reached")).Join(closeErr)
-			case errors.Is(err, ErrUnauthorized):
-				err = flaw.From(errors.New("received unauthorized error")).Join(closeErr)
-			default:
-				err = must.BeFlaw(err).Join(closeErr)
-			}
-		}
-	}()
-
-	var content File
-	if err := json.NewDecoder(f).Decode(&content); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
-		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err)).Append(flawP)
+		return nil, err
 	}
 
 	if time.Now().After(time.Unix(content.ExpiresAt, 0)) {
-		return handleUnauthorized(ctx, content.RefreshToken, tokenFilePath)
+		return handleUnauthorized(ctx, content.RefreshToken, tokenFile)
 	}
 
 	if err := verifyAccessToken(ctx, content.AccessToken); nil != err {
@@ -138,58 +97,30 @@ func load(ctx context.Context, tokenFilePath string) (creds *Credentials, err er
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, context.DeadlineExceeded
 		case errors.Is(err, ErrUnauthorized):
-			return handleUnauthorized(ctx, content.RefreshToken, tokenFilePath)
+			return handleUnauthorized(ctx, content.RefreshToken, tokenFile)
 		case errutil.IsFlaw(err):
 			return nil, err
 		default:
 			panic(errutil.UnknownError(err))
 		}
 	}
-	return ptr.Of(Credentials(content)), nil
+	return ptr.Of(credentialsFromTokenFileContent(*content)), nil
 }
 
-func handleUnauthorized(ctx context.Context, rt string, tokenFilePath string) (*Credentials, error) {
+func handleUnauthorized(ctx context.Context, rt string, tokenFile tidalfs.AuthTokenFile) (*Credentials, error) {
 	refreshResult, err := refreshToken(ctx, rt)
 	if nil != err {
 		return nil, err
 	}
-	newFileContent := File{
+	newFileContent := tidalfs.AuthTokenFileContent{
 		AccessToken:  refreshResult.AccessToken,
 		RefreshToken: rt,
 		ExpiresAt:    refreshResult.ExpiresAt,
 	}
-	if err := save(newFileContent, tokenFilePath); nil != err {
+	if err := tokenFile.Write(newFileContent); nil != err {
 		return nil, err
 	}
 	return ptr.Of(Credentials(newFileContent)), nil
-}
-
-func save(content File, tokenFilePath string) (err error) {
-	f, err := os.OpenFile(tokenFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0o0600)
-	if nil != err {
-		flawP := flaw.P{
-			"err_debug_tree":  errutil.Tree(err).FlawP(),
-			"token_file_path": tokenFilePath,
-		}
-		return flaw.From(fmt.Errorf("failed to open token file: %v", err)).Append(flawP)
-	}
-	defer func() {
-		if closeErr := f.Close(); nil != closeErr {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
-			closeErr = flaw.From(fmt.Errorf("failed to close token file: %v", closeErr)).Append(flawP)
-			if nil != err {
-				err = must.BeFlaw(err).Join(closeErr)
-			} else {
-				err = closeErr
-			}
-		}
-	}()
-
-	if err := json.NewEncoder(f).EncodeWithOption(content); nil != err {
-		flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP(), "content": content.flawP()}
-		return flaw.From(fmt.Errorf("failed to encode token file: %v", err)).Append(flawP)
-	}
-	return nil
 }
 
 type RefreshTokenResult struct {
@@ -495,15 +426,17 @@ func NewAuthorizer(ctx context.Context, credsDir string) (link *AuthorizationRes
 						panic(errutil.UnknownError(err))
 					}
 				}
-				f := File(*creds)
-				flawP := flaw.P{"creds": f.flawP()}
-				a := authFromDir(credsDir)
-				if err := save(f, a.tokenFilePath()); nil != err {
-					flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
+				content := tidalfs.AuthTokenFileContent(*creds)
+				tokenFile := tidalfs.AuthTokenFileFrom(credsDir, tokenFileName)
+				if err := tokenFile.Write(content); nil != err {
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
 					return
 				}
-				done <- result.Ok(a.withCreds(*creds))
+				done <- result.Ok(&Auth{
+					file:  tokenFile,
+					creds: *creds,
+				})
 				return
 			}
 		}

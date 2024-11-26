@@ -778,7 +778,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 	flawP["job"] = job.flawP()
 	w.currentJob = &job
 
-	downloadBaseDir := tidalfs.From("downloads")
+	downloadBaseDir := tidalfs.DownloadDirFrom("downloads")
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
