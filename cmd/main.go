@@ -221,7 +221,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 		}
 
-		tidlAuth, err := auth.Load(ctx, cfg.CredsDir)
+		tidlAuth, err := auth.LoadFromDir(ctx, cfg.CredsDir)
 		if nil != err {
 			switch {
 			case errors.Is(ctx.Err(), context.Canceled):
@@ -863,9 +863,10 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
+
 			if err := dl.Album(ctx, link.ID); nil != err {
 				switch {
-				case errutil.IsContext(ctx):
+				case errutil.IsContext(ctx), errors.Is(err, auth.ErrUnauthorized):
 					return false, err
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded

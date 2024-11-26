@@ -3,7 +3,6 @@ package download
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/samber/lo"
 	"github.com/tidwall/gjson"
 	"github.com/xeptore/flaw/v8"
@@ -52,13 +52,9 @@ const (
 
 var ErrTooManyRequests = errors.New("too many requests")
 
-type Auth interface {
-	AccessToken() (string, error)
-}
-
 type Downloader struct {
 	dir                   fs.DownloadDir
-	auth                  Auth
+	auth                  *auth.Auth
 	albumsMetaCache       *cache.AlbumsMetaCache
 	downloadedCoversCache *cache.DownloadedCoversCache
 	trackCreditsCache     *cache.TrackCreditsCache
@@ -66,7 +62,7 @@ type Downloader struct {
 
 func NewDownloader(
 	dir fs.DownloadDir,
-	auth Auth,
+	auth *auth.Auth,
 	albumsMetaCache *cache.AlbumsMetaCache,
 	downloadedCoversCache *cache.DownloadedCoversCache,
 	trackCreditsCache *cache.TrackCreditsCache,
@@ -81,7 +77,7 @@ func NewDownloader(
 }
 
 func (d *Downloader) Single(ctx context.Context, id string) (err error) {
-	accessToken, err := d.auth.AccessToken()
+	accessToken, err := d.auth.AccessToken(ctx)
 	if nil != err {
 		return err
 	}
@@ -260,10 +256,23 @@ func fetchTrackCredits(ctx context.Context, accessToken string, id string) (c *t
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return nil, err
 		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
@@ -370,10 +379,23 @@ func fetchTrackLyrics(ctx context.Context, accessToken string, id string) (l str
 	case http.StatusNotFound:
 		return "", nil
 	case http.StatusUnauthorized:
-		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return "", err
 		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return "", err
+		} else if ok {
+			return "", auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return "", err
+		} else if ok {
+			return "", auth.ErrUnauthorized
+		}
+
 		flawP["response_body"] = string(respBytes)
 		return "", flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
@@ -626,17 +648,16 @@ func getSingleTrackMeta(ctx context.Context, accessToken, id string) (m *SingleT
 		if nil != err {
 			return nil, err
 		}
-		var respBody struct {
-			Status      int    `json:"status"`
-			SubStatus   int    `json:"subStatus"`
-			UserMessage string `json:"userMessage"`
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
 		}
-		if err := json.Unmarshal(respBytes, &respBody); nil != err {
-			flawP["response_body"] = string(respBytes)
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return nil, flaw.From(fmt.Errorf("failed to decode 401 unauthorized response body: %v", err)).Append(flawP)
-		}
-		if respBody.Status == 401 && respBody.SubStatus == 11002 && respBody.UserMessage == "Token could not be verified" {
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
 			return nil, auth.ErrUnauthorized
 		}
 
@@ -794,10 +815,23 @@ func downloadCover(ctx context.Context, accessToken, coverID string) (b []byte, 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return nil, err
 		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
@@ -911,6 +945,26 @@ func fetchAlbumMeta(ctx context.Context, accessToken, id string) (m *tidal.Album
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
@@ -1076,10 +1130,23 @@ func getStream(ctx context.Context, accessToken, id string) (s Stream, f *tidal.
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return nil, nil, err
 		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, nil, err
+		} else if ok {
+			return nil, nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, nil, err
+		} else if ok {
+			return nil, nil, auth.ErrUnauthorized
+		}
+
 		flawP["response_body"] = string(respBytes)
 		return nil, nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
@@ -1221,7 +1288,7 @@ type ListTrackMeta struct {
 }
 
 func (d *Downloader) Playlist(ctx context.Context, id string) error {
-	accessToken, err := d.auth.AccessToken()
+	accessToken, err := d.auth.AccessToken(ctx)
 	if nil != err {
 		return err
 	}
@@ -1418,6 +1485,26 @@ func getPlaylistMeta(ctx context.Context, accessToken, id string) (m *PlaylistMe
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
@@ -1629,7 +1716,7 @@ func playlistTracksPage(ctx context.Context, accessToken, id string, page int) (
 }
 
 func (d *Downloader) Mix(ctx context.Context, id string) error {
-	accessToken, err := d.auth.AccessToken()
+	accessToken, err := d.auth.AccessToken(ctx)
 	if nil != err {
 		return err
 	}
@@ -1824,6 +1911,26 @@ func getMixMeta(ctx context.Context, accessToken, id string) (m *MixMeta, err er
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return nil, ErrTooManyRequests
 	case http.StatusForbidden:
@@ -2014,7 +2121,7 @@ func mixTracksPage(ctx context.Context, accessToken, id string, page int) (ts []
 }
 
 func (d *Downloader) Album(ctx context.Context, id string) error {
-	accessToken, err := d.auth.AccessToken()
+	accessToken, err := d.auth.AccessToken(ctx)
 	if nil != err {
 		return err
 	}
@@ -2375,10 +2482,23 @@ func getPagedItems(ctx context.Context, accessToken, itemsURL string, reqParams 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return nil, err
 		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, auth.ErrUnauthorized
+		}
+
 		flawP["response_body"] = string(respBytes)
 		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:

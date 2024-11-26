@@ -40,26 +40,43 @@ type Credentials struct {
 }
 
 type Auth struct {
+	dir   string
 	creds Credentials
 }
 
-func tokenFilePath(dir string) string {
-	return filepath.Join(dir, tokenFileName)
+func authFromDir(dir string) *Auth {
+	return &Auth{dir: dir}
 }
 
-func (a *Auth) AccessToken() (string, error) {
+func (a *Auth) tokenFilePath() string {
+	return filepath.Join(a.dir, tokenFileName)
+}
+
+func (a *Auth) withCreds(creds Credentials) *Auth {
+	a.creds = creds
+	return a
+}
+
+func (a *Auth) AccessToken(ctx context.Context) (string, error) {
 	if time.Now().After(time.Unix(a.creds.ExpiresAt, 0)) {
-		return "", ErrUnauthorized
+		creds, err := handleUnauthorized(ctx, a.creds.RefreshToken, a.tokenFilePath())
+		if nil != err {
+			return "", err
+		}
+		a.withCreds(*creds)
+		return a.creds.AccessToken, nil
 	}
+
 	return a.creds.AccessToken, nil
 }
 
-func Load(ctx context.Context, credsDir string) (*Auth, error) {
-	creds, err := load(ctx, tokenFilePath(credsDir))
+func LoadFromDir(ctx context.Context, credsDir string) (*Auth, error) {
+	a := authFromDir(credsDir)
+	creds, err := load(ctx, a.tokenFilePath())
 	if nil != err {
 		return nil, err
 	}
-	return &Auth{creds: *creds}, nil
+	return a.withCreds(*creds), nil
 }
 
 type File struct {
@@ -110,7 +127,7 @@ func load(ctx context.Context, tokenFilePath string) (creds *Credentials, err er
 		return nil, flaw.From(fmt.Errorf("failed to decode token file: %v", err)).Append(flawP)
 	}
 
-	if time.Now().Unix() > content.ExpiresAt {
+	if time.Now().After(time.Unix(content.ExpiresAt, 0)) {
 		return handleUnauthorized(ctx, content.RefreshToken, tokenFilePath)
 	}
 
@@ -243,6 +260,26 @@ func refreshToken(ctx context.Context, refreshToken string) (res *RefreshTokenRe
 
 	switch code := resp.StatusCode; code {
 	case http.StatusOK:
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return nil, err
+		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return nil, err
+		} else if ok {
+			return nil, ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return nil, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusBadRequest:
 		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
@@ -370,17 +407,16 @@ func verifyAccessToken(ctx context.Context, accessToken string) (err error) {
 		if nil != err {
 			return err
 		}
-		var respBody struct {
-			Status      int    `json:"status"`
-			SubStatus   int    `json:"subStatus"`
-			UserMessage string `json:"userMessage"`
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return err
+		} else if ok {
+			return ErrUnauthorized
 		}
-		if err := json.Unmarshal(respBytes, &respBody); nil != err {
-			flawP["response_body"] = string(respBytes)
-			flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-			return flaw.From(fmt.Errorf("failed to decode 401 status code response body: %v", err)).Append(flawP)
-		}
-		if respBody.Status == 401 && respBody.SubStatus == 11002 && respBody.UserMessage == "Token could not be verified" {
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return err
+		} else if ok {
 			return ErrUnauthorized
 		}
 
@@ -461,12 +497,13 @@ func NewAuthorizer(ctx context.Context, credsDir string) (link *AuthorizationRes
 				}
 				f := File(*creds)
 				flawP := flaw.P{"creds": f.flawP()}
-				if err := save(f, tokenFilePath(credsDir)); nil != err {
+				a := authFromDir(credsDir)
+				if err := save(f, a.tokenFilePath()); nil != err {
 					flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 					done <- result.Err[Auth](must.BeFlaw(err).Append(flawP))
 					return
 				}
-				done <- result.Ok(&Auth{creds: *creds})
+				done <- result.Ok(a.withCreds(*creds))
 				return
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/goccy/go-json"
 	"github.com/xeptore/flaw/v8"
 
 	"github.com/xeptore/tgtd/errutil"
@@ -46,4 +47,30 @@ func ReadOptionalResponseBody(ctx context.Context, resp *http.Response) ([]byte,
 		return nil, err
 	}
 	return respBody, nil
+}
+
+func IsTokenExpiredUnauthorizedResponse(b []byte) (bool, error) {
+	var body struct {
+		Status      int    `json:"status"`
+		SubStatus   int    `json:"subStatus"`
+		UserMessage string `json:"userMessage"`
+	}
+	if err := json.Unmarshal(b, &body); nil != err {
+		flawP := flaw.P{"response_body": string(b), "err_debug_tree": errutil.Tree(err).FlawP()}
+		return false, flaw.From(fmt.Errorf("failed to decode 401 status code response body: %v", err)).Append(flawP)
+	}
+	return body.Status == 401 && body.SubStatus == 11003 && body.UserMessage == "The token has expired. (Expired on time)", nil
+}
+
+func IsTokenInvalidUnauthorizedResponse(b []byte) (bool, error) {
+	var body struct {
+		Status      int    `json:"status"`
+		SubStatus   int    `json:"subStatus"`
+		UserMessage string `json:"userMessage"`
+	}
+	if err := json.Unmarshal(b, &body); nil != err {
+		flawP := flaw.P{"response_body": string(b), "err_debug_tree": errutil.Tree(err).FlawP()}
+		return false, flaw.From(fmt.Errorf("failed to decode 401 status code response body: %v", err)).Append(flawP)
+	}
+	return body.Status == 401 && body.SubStatus == 11002 && body.UserMessage == "Token could not be verified", nil
 }
