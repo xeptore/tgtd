@@ -19,6 +19,7 @@ import (
 	"github.com/xeptore/tgtd/httputil"
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
+	"github.com/xeptore/tgtd/tidal/auth"
 	"github.com/xeptore/tgtd/tidal/mpd"
 )
 
@@ -271,10 +272,23 @@ func (d *DashTrackStream) downloadSegment(ctx context.Context, accessToken, link
 	switch status := resp.StatusCode; status {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		respBytes, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return err
 		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return err
+		} else if ok {
+			return auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return err
+		} else if ok {
+			return auth.ErrUnauthorized
+		}
+
 		flawP["response_body"] = string(respBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:

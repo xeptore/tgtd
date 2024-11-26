@@ -19,6 +19,7 @@ import (
 	"github.com/xeptore/tgtd/mathutil"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/ratelimit"
+	"github.com/xeptore/tgtd/tidal/auth"
 )
 
 type VndTrackStream struct {
@@ -221,6 +222,26 @@ func (d *VndTrackStream) fileSize(ctx context.Context, accessToken string) (size
 			return 0, flaw.From(fmt.Errorf("failed to parse content length: %v", err)).Append(flawP)
 		}
 		return size, nil
+	case http.StatusUnauthorized:
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
+		if nil != err {
+			return 0, err
+		}
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return 0, err
+		} else if ok {
+			return 0, auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return 0, err
+		} else if ok {
+			return 0, auth.ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
+		return 0, flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return 0, ErrTooManyRequests
 	case http.StatusForbidden:
@@ -316,11 +337,24 @@ func (d *VndTrackStream) downloadRange(ctx context.Context, accessToken string, 
 	switch status := resp.StatusCode; status {
 	case http.StatusPartialContent:
 	case http.StatusUnauthorized:
-		respBody, err := httputil.ReadOptionalResponseBody(ctx, resp)
+		respBytes, err := httputil.ReadResponseBody(ctx, resp)
 		if nil != err {
 			return err
 		}
-		flawP["response_body"] = string(respBody)
+
+		if ok, err := httputil.IsTokenExpiredUnauthorizedResponse(respBytes); nil != err {
+			return err
+		} else if ok {
+			return auth.ErrUnauthorized
+		}
+
+		if ok, err := httputil.IsTokenInvalidUnauthorizedResponse(respBytes); nil != err {
+			return err
+		} else if ok {
+			return auth.ErrUnauthorized
+		}
+
+		flawP["response_body"] = string(respBytes)
 		return flaw.From(errors.New("received 401 response")).Append(flawP)
 	case http.StatusTooManyRequests:
 		return ErrTooManyRequests

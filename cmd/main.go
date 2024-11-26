@@ -221,7 +221,7 @@ func run(cliCtx *cli.Context) (err error) {
 			}
 		}
 
-		tidlAuth, err := auth.Load(ctx, cfg.CredsDir)
+		tidlAuth, err := auth.LoadFromDir(ctx, cfg.CredsDir)
 		if nil != err {
 			switch {
 			case errors.Is(ctx.Err(), context.Canceled):
@@ -778,13 +778,13 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 	flawP["job"] = job.flawP()
 	w.currentJob = &job
 
-	downloadBaseDir := tidalfs.From("downloads")
+	downloadBaseDir := tidalfs.DownloadDirFrom("downloads")
 
 	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
 	dl := tidaldl.NewDownloader(
 		downloadBaseDir,
-		w.tidalAuth.Creds.AccessToken,
+		w.tidalAuth,
 		&w.cache.AlbumsMeta,
 		&w.cache.DownloadedCovers,
 		&w.cache.TrackCredits,
@@ -804,10 +804,16 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
+
 			if err := dl.Playlist(ctx, link.ID); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
+				case errors.Is(err, auth.ErrUnauthorized):
+					if err := w.tidalAuth.RefreshToken(ctx); nil != err {
+						return false, err
+					}
+					return attemptRemained, nil
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
 				case errors.Is(err, tidaldl.ErrTooManyRequests):
@@ -863,10 +869,16 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
+
 			if err := dl.Album(ctx, link.ID); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
+				case errors.Is(err, auth.ErrUnauthorized):
+					if err := w.tidalAuth.RefreshToken(ctx); nil != err {
+						return false, err
+					}
+					return attemptRemained, nil
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
 				case errors.Is(err, tidaldl.ErrTooManyRequests):
@@ -918,10 +930,16 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
+
 			if err := dl.Single(ctx, link.ID); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
+				case errors.Is(err, auth.ErrUnauthorized):
+					if err := w.tidalAuth.RefreshToken(ctx); nil != err {
+						return false, err
+					}
+					return attemptRemained, nil
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
 				case errors.Is(err, tidaldl.ErrTooManyRequests):
@@ -973,10 +991,16 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			const maxAttempts = 3
 			attemptRemained := attempt < maxAttempts
 			time.Sleep(time.Duration(attempt-1) * 3 * time.Second)
+
 			if err := dl.Mix(ctx, link.ID); nil != err {
 				switch {
 				case errutil.IsContext(ctx):
 					return false, err
+				case errors.Is(err, auth.ErrUnauthorized):
+					if err := w.tidalAuth.RefreshToken(ctx); nil != err {
+						return false, err
+					}
+					return attemptRemained, nil
 				case errors.Is(err, context.DeadlineExceeded):
 					return attemptRemained, context.DeadlineExceeded
 				case errors.Is(err, tidaldl.ErrTooManyRequests):
