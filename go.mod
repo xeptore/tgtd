@@ -4,7 +4,7 @@ go 1.23.3
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/goccy/go-json v0.10.3
+	github.com/goccy/go-json v0.10.4
 	github.com/gotd/td v0.115.0
 	github.com/iyear/tdl/core v0.18.3
 	github.com/joho/godotenv v1.5.1
