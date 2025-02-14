@@ -16,7 +16,7 @@ func TestWithDelayedTimeout(t *testing.T) {
 	t.Run("initially_active", func(t *testing.T) {
 		t.Parallel()
 
-		parentCtx, parentCancel := context.WithCancel(context.Background())
+		parentCtx, parentCancel := context.WithCancel(t.Context())
 		defer parentCancel()
 
 		waitDur := 2 * time.Second
@@ -34,7 +34,7 @@ func TestWithDelayedTimeout(t *testing.T) {
 	t.Run("cancels_after_delay", func(t *testing.T) {
 		t.Parallel()
 
-		parentCtx, parentCancel := context.WithCancel(context.Background())
+		parentCtx, parentCancel := context.WithCancel(t.Context())
 		defer parentCancel()
 
 		waitDur := 2 * time.Second

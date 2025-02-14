@@ -4,7 +4,6 @@ import (
 	"github.com/gotd/td/telegram"
 )
 
-//nolint:exhaustruct
 var Device = telegram.DeviceConfig{
 	DeviceModel:    "Desktop",
 	SystemVersion:  "Windows 10",
