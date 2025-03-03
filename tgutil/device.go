@@ -2,6 +2,7 @@ package tgutil
 
 import (
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/tg"
 )
 
 var Device = telegram.DeviceConfig{
@@ -11,4 +12,6 @@ var Device = telegram.DeviceConfig{
 	LangCode:       "en",
 	SystemLangCode: "en-US",
 	LangPack:       "tdesktop",
+	Proxy:          tg.InputClientProxy{},
+	Params:         nil,
 }
