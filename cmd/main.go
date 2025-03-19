@@ -131,6 +131,8 @@ func run(cliCtx *cli.Context) (err error) {
 		}
 		cfg = c
 	}
+	lvl, _ := zerolog.ParseLevel(cfg.LogLevel)
+	logger = logger.Level(lvl)
 
 	appID, err := strconv.Atoi(os.Getenv("APP_ID"))
 	if nil != err {
