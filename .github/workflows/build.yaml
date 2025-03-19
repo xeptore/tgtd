@@ -28,7 +28,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
@@ -59,7 +59,7 @@ jobs:
     name: Build Docker Image
     needs:
       - lint
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     permissions:
       packages: write
       contents: read
