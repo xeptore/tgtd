@@ -56,7 +56,7 @@ func TestWithDelayedTimeout(t *testing.T) {
 		case <-ctx.Done():
 			elapsed := time.Since(time.Now().Add(-waitDur))
 			if elapsed < 2*time.Second {
-				assert.Fail(t, "expected delay of approximately 2 seconds, but was %v", elapsed)
+				assert.Fail(t, "unexpected delay", "expected delay of approximately 2 seconds, but was %v", elapsed)
 			}
 		case <-time.After(waitDur + 500*time.Millisecond):
 			assert.Fail(t, "expected returned context to be canceled after approximately 2 seconds")

@@ -42,8 +42,8 @@ func (f AuthTokenFile) Read() (c *AuthTokenFileContent, err error) {
 		if closeErr := file.Close(); nil != closeErr {
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(closeErr).FlawP()}
 			closeErr = flaw.From(fmt.Errorf("failed to close token file: %v", closeErr)).Append(flawP)
-			switch {
-			case nil == err:
+			switch err {
+			case nil:
 				err = closeErr
 			default:
 				err = must.BeFlaw(err).Join(closeErr)
