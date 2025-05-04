@@ -211,8 +211,8 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo,
 		wg.Go(func() error {
 			builder := newTrackUploadBuilder(&w.cache.UploadedCovers)
 			if i == len(batch)-1 { // last track in this batch
-				captionWithSignature := append(caption, styling.Plain("\n"), styling.Italic(w.config.Signature))
-				builder.WithCaption(captionWithSignature)
+				caption := append(caption, styling.Plain("\n"), styling.Italic(w.config.Signature))
+				builder.WithCaption(caption)
 			}
 			document, err := builder.uploadTrack(wgCtx, up, item)
 			if nil != err {
