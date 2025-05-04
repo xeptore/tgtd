@@ -277,7 +277,7 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 		}
 	}()
 
-	caption := []styling.StyledTextOption{styling.Plain(info.Caption)}
+	caption := []styling.StyledTextOption{styling.Plain(info.Caption), styling.Plain("\n"), styling.Plain(w.config.Signature)}
 	uploadInfo := TrackUploadInfo{
 		FilePath:   trackFs.Path,
 		ArtistName: tidal.JoinArtists(info.Artists),

@@ -4,3 +4,5 @@ target_peer_id: "@username"
 credentials_dir: .creds
 from_ids:
   - 123456789
+signature: |-
+  @itsxeptore
