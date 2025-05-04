@@ -15,6 +15,7 @@ type Config struct {
 	TargetPeerID    string  `yaml:"target_peer_id"`
 	CredsDir        string  `yaml:"credentials_dir"`
 	FromIDs         []int64 `yaml:"from_ids"`
+	Signature       string  `yaml:"signature"`
 }
 
 func (cfg *Config) setDefaults() {
