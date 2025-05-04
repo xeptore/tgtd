@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/entity"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
@@ -277,7 +278,14 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 		}
 	}()
 
-	caption := []styling.StyledTextOption{styling.Plain(info.Caption), styling.Plain("\n"), styling.Plain(w.config.Signature)}
+	caption := []styling.StyledTextOption{
+		styling.Plain(info.Caption),
+		styling.Plain("\n"),
+		styling.Custom(func(eb *entity.Builder) error {
+			_, err := eb.WriteString(w.config.Signature)
+			return err
+		}),
+	}
 	uploadInfo := TrackUploadInfo{
 		FilePath:   trackFs.Path,
 		ArtistName: tidal.JoinArtists(info.Artists),
