@@ -1,0 +1,35 @@
+name: tgtd
+services:
+  tgtd:
+    image: ghcr.io/xeptore/tgtd:edge
+    command: run --config /home/nonroot/config.yml
+    pull_policy: always
+    volumes:
+      - type: bind
+        source: config.yml
+        target: /home/nonroot/config.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: .env
+        target: /home/nonroot/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      # Optional. Uncomment if you want easy access to downloaded tracks from the host.
+      # - type: bind
+      #   # Make sure source directory is owned by tgtd process uid:gid
+      #   # Can be found using: `stat -c "%u %g" /proc/$pid/`
+      #   source: downloads
+      #   target: /home/nonroot/downloads/
+      #   bind:
+      #     create_host_path: false
+      # Optional. Uncomment if you want credentials to persis among container recreations.
+      # - type: bind
+      #   # Make sure source directory is owned by tgtd process uid:gid
+      #   # Can be found using: `stat -c "%u %g" /proc/$pid/`
+      #   source: .creds
+      #   target: /home/nonroot/.creds/
+      #   bind:
+      #     create_host_path: false
