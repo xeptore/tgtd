@@ -1740,6 +1740,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 
 	wg.SetLimit(ratelimit.MixDownloadConcurrency)
 	for _, track := range tracks {
+		// TODO: ignore wg context cancellation
 		wg.Go(func() (err error) {
 			trackFs := mixFs.Track(track.ID)
 			if exists, err := trackFs.Cover.Exists(); nil != err {
@@ -1773,7 +1774,7 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 				return err
 			}
 
-			trackLyrics, err := fetchTrackLyrics(ctx, accessToken, id)
+			trackLyrics, err := fetchTrackLyrics(ctx, accessToken, track.ID)
 			if nil != err {
 				return err
 			}
