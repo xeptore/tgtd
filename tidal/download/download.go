@@ -1740,7 +1740,6 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 
 	wg.SetLimit(ratelimit.MixDownloadConcurrency)
 	for _, track := range tracks {
-		// TODO: ignore wg context cancellation
 		wg.Go(func() (err error) {
 			trackFs := mixFs.Track(track.ID)
 			if exists, err := trackFs.Cover.Exists(); nil != err {
@@ -1762,9 +1761,8 @@ func (d *Downloader) Mix(ctx context.Context, id string) error {
 			}
 			defer func() {
 				if nil != err {
-					if removeErr := trackFs.Remove(); nil != removeErr {
-						flawP["err_debug_tree"] = errutil.Tree(removeErr).FlawP()
-						err = flaw.From(fmt.Errorf("failed to remove track directory: %v", removeErr)).Append(flawP)
+					if removeErr := trackFs.Remove(); nil != removeErr && !errors.Is(err, os.ErrNotExist) {
+						err = flaw.From(fmt.Errorf("failed to remove track file: %v", removeErr)).Append(flawP)
 					}
 				}
 			}()
