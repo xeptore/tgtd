@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/html"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
@@ -211,7 +212,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo,
 		wg.Go(func() error {
 			builder := newTrackUploadBuilder(&w.cache.UploadedCovers)
 			if i == len(batch)-1 { // last track in this batch
-				caption := append(caption, styling.Plain("\n"), styling.Italic(w.config.Signature))
+				caption := append(caption, styling.Plain("\n"), html.String(nil, w.config.Signature))
 				builder.WithCaption(caption)
 			}
 			document, err := builder.uploadTrack(wgCtx, up, item)
@@ -281,7 +282,7 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 	caption := []styling.StyledTextOption{
 		styling.Plain(info.Caption),
 		styling.Plain("\n"),
-		styling.Italic(w.config.Signature),
+		html.String(nil, w.config.Signature),
 	}
 	uploadInfo := TrackUploadInfo{
 		FilePath:   trackFs.Path,
