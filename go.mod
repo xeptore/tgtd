@@ -5,7 +5,7 @@ go 1.24.3
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/goccy/go-json v0.10.5
-	github.com/gotd/td v0.124.0
+	github.com/gotd/td v0.125.0
 	github.com/iyear/tdl/core v0.18.5
 	github.com/joho/godotenv v1.5.1
 	github.com/karlseguin/ccache/v3 v3.0.6
@@ -48,9 +48,9 @@ require (
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
-	go.opentelemetry.io/otel v1.35.0 // indirect
-	go.opentelemetry.io/otel/metric v1.35.0 // indirect
-	go.opentelemetry.io/otel/trace v1.35.0 // indirect
+	go.opentelemetry.io/otel v1.36.0 // indirect
+	go.opentelemetry.io/otel/metric v1.36.0 // indirect
+	go.opentelemetry.io/otel/trace v1.36.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
