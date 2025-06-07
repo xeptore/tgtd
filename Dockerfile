@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM docker.io/library/golang:1.24.3-alpine AS build
+FROM docker.io/library/golang:1.24.4-alpine AS build
 RUN <<eot
   set -Eeux
   apk update
