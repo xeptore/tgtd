@@ -16,7 +16,7 @@ require (
 	github.com/tidwall/pretty v1.2.1
 	github.com/urfave/cli/v2 v2.27.7
 	github.com/xeptore/flaw/v8 v8.3.0
-	golang.org/x/exp v0.0.0-20250506013437-ce4c2cf36ca6
+	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
 	golang.org/x/sync v0.15.0
 	gopkg.in/matryer/try.v1 v1.0.0-20150601225556-312d2599e12e
 	gopkg.in/yaml.v3 v3.0.1
@@ -42,15 +42,15 @@ require (
 	github.com/matryer/try v0.0.0-20161228173917-9ac251b645a2 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/ogen-go/ogen v1.12.0 // indirect
+	github.com/ogen-go/ogen v1.14.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
-	go.opentelemetry.io/otel v1.36.0 // indirect
-	go.opentelemetry.io/otel/metric v1.36.0 // indirect
-	go.opentelemetry.io/otel/trace v1.36.0 // indirect
+	go.opentelemetry.io/otel v1.37.0 // indirect
+	go.opentelemetry.io/otel/metric v1.37.0 // indirect
+	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
@@ -59,7 +59,7 @@ require (
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
-	golang.org/x/tools v0.33.0 // indirect
+	golang.org/x/tools v0.34.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
