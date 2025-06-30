@@ -160,10 +160,6 @@ func run(cliCtx *cli.Context) (err error) {
 		telegram.Options{
 			SessionStorage: &session.FileStorage{Path: filepath.Join(cfg.CredsDir, "session.json")},
 			UpdateHandler:  updateHandler,
-			MaxRetries:     -1,
-			AckBatchSize:   100,
-			AckInterval:    10 * time.Second,
-			RetryInterval:  5 * time.Second,
 			DialTimeout:    10 * time.Second,
 			Device:         tgutil.Device,
 			Middlewares:    tgutil.DefaultMiddlewares(ctx),
@@ -365,11 +361,27 @@ func buildOnMessage(w *Worker, msgCtx context.Context, cfg config.Config) func(c
 		if !ok || m.Out {
 			return nil
 		}
-		if u, ok := m.FromID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
-			return nil
-		}
 		msg := m.Message
 		reply := w.sender.Reply(e, update)
+
+		switch peer := m.PeerID.(type) {
+		case *tg.PeerChat:
+			if u, ok := m.FromID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
+				return nil
+			}
+		case *tg.PeerUser:
+			if !slices.Contains(w.config.FromIDs, peer.UserID) {
+				return nil
+			}
+		default:
+			if _, err := reply.Text(msgCtx, "Unsupported invocation."); nil != err {
+				if errors.Is(msgCtx.Err(), context.Canceled) {
+					return nil
+				}
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+			}
+		}
 
 		if msg == "/start" {
 			if _, err := reply.Text(msgCtx, "Hello!"); nil != err {
