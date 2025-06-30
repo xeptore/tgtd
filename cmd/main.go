@@ -210,9 +210,9 @@ func run(cliCtx *cli.Context) (err error) {
 		api := tg.NewClient(client)
 		w.sender = message.NewSender(api)
 
-		chat := w.sender.Resolve(cfg.TargetPeerID)
+		fatherChat := w.sender.Resolve(cfg.TargetPeerID)
 
-		if _, err = chat.StyledText(clientCtx, styling.Italic("Bot has started!")); nil != err {
+		if _, err = fatherChat.StyledText(clientCtx, styling.Italic("Bot has started!")); nil != err {
 			switch {
 			case errutil.IsContext(clientCtx):
 				logger.Error().Msg("Failed to send bot startup message to specified target chat due to context cancellation")
@@ -251,7 +251,7 @@ func run(cliCtx *cli.Context) (err error) {
 				}
 			}
 
-			_, err = chat.StyledText(
+			_, err = fatherChat.StyledText(
 				clientCtx,
 				styling.Plain("Please visit the following link to authorize the application:"),
 				styling.Plain("\n"),
@@ -277,7 +277,7 @@ func run(cliCtx *cli.Context) (err error) {
 				case errors.Is(ctx.Err(), context.Canceled):
 					return context.Canceled
 				case errors.Is(err, auth.ErrAuthWaitTimeout):
-					if _, err = chat.StyledText(clientCtx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
+					if _, err = fatherChat.StyledText(clientCtx, styling.Plain("Authorization URL expired. Restart the bot to initiate the authorization flow again.")); nil != err {
 						if errors.Is(clientCtx.Err(), context.Canceled) {
 							return context.Canceled
 						}
@@ -293,7 +293,7 @@ func run(cliCtx *cli.Context) (err error) {
 						styling.Plain("\n"),
 						styling.Plain("Restart the bot to initiate the authorization flow again."),
 					}
-					if _, err := chat.StyledText(clientCtx, lines...); nil != err {
+					if _, err := fatherChat.StyledText(clientCtx, lines...); nil != err {
 						if errors.Is(clientCtx.Err(), context.Canceled) {
 							return context.Canceled
 						}
@@ -311,7 +311,7 @@ func run(cliCtx *cli.Context) (err error) {
 				styling.Plain("\n"),
 				styling.Plain("Waiting for your command..."),
 			}
-			if _, err := chat.StyledText(clientCtx, lines...); nil != err {
+			if _, err := fatherChat.StyledText(clientCtx, lines...); nil != err {
 				if errors.Is(clientCtx.Err(), context.Canceled) {
 					return context.Canceled
 				}
@@ -343,7 +343,7 @@ func run(cliCtx *cli.Context) (err error) {
 		<-ctx.Done()
 
 		logger.Debug().Msg("Stopping bot due to received signal")
-		if _, err = chat.StyledText(clientCtx, styling.Italic("Bot is shutting down...")); nil != err {
+		if _, err = fatherChat.StyledText(clientCtx, styling.Italic("Bot is shutting down...")); nil != err {
 			switch {
 			case errors.Is(clientCtx.Err(), context.Canceled):
 				logger.Error().Msg("Failed to send shutdown message to specified target chat due to context cancellation")
@@ -608,7 +608,7 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 		}
 	}
 
-	if err := w.run(ctx, msg.ID, *link); nil != err {
+	if err := w.run(ctx, reply, *link); nil != err {
 		switch {
 		case errutil.IsContext(ctx):
 			// Parent context is canceled. Nothing that we need to do.
@@ -731,7 +731,6 @@ func (w *Worker) newUploader(ctx context.Context) (*uploader.Uploader, func() er
 type Job struct {
 	ID        string
 	CreatedAt time.Time
-	MessageID int
 	cancel    context.CancelFunc
 }
 
@@ -739,7 +738,6 @@ func (j *Job) flawP() flaw.P {
 	return flaw.P{
 		"id":         j.ID,
 		"created_at": j.CreatedAt,
-		"message_id": j.MessageID,
 	}
 }
 
@@ -805,7 +803,7 @@ func (w *Worker) cancelCurrentJob() error {
 	return os.ErrProcessDone
 }
 
-func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
+func (w *Worker) run(ctx context.Context, reply *message.Builder, link DownloadLink) error {
 	if !w.mutex.TryLock() {
 		return &JobAlreadyRunningError{ID: w.currentJob.ID}
 	}
@@ -822,15 +820,12 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 	job := Job{
 		ID:        link.ID,
 		CreatedAt: time.Now(),
-		MessageID: msgID,
 		cancel:    cancel,
 	}
 	flawP["job"] = job.flawP()
 	w.currentJob = &job
 
 	downloadBaseDir := tidalfs.DownloadDirFrom("downloads")
-
-	reply := w.sender.Resolve(w.config.TargetPeerID).Reply(msgID)
 
 	dl := tidaldl.NewDownloader(
 		downloadBaseDir,
@@ -888,7 +883,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
-		if err := w.uploadPlaylist(ctx, downloadBaseDir); nil != err {
+		if err := w.uploadPlaylist(ctx, reply, downloadBaseDir); nil != err {
 			switch {
 			case errutil.IsContext(ctx), errors.Is(err, context.DeadlineExceeded):
 				return err
@@ -953,7 +948,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
-		if err := w.uploadAlbum(ctx, downloadBaseDir); nil != err {
+		if err := w.uploadAlbum(ctx, reply, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
@@ -1014,7 +1009,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
-		if err := w.uploadSingle(ctx, downloadBaseDir); nil != err {
+		if err := w.uploadSingle(ctx, reply, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
@@ -1075,7 +1070,7 @@ func (w *Worker) run(ctx context.Context, msgID int, link DownloadLink) error {
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 
-		if err := w.uploadMix(ctx, downloadBaseDir); nil != err {
+		if err := w.uploadMix(ctx, reply, downloadBaseDir); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}

@@ -24,7 +24,7 @@ import (
 	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
 
-func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error {
+func (w *Worker) uploadAlbum(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) error {
 	albumFs := dir.Album(w.currentJob.ID)
 
 	info, err := albumFs.InfoFile.Read()
@@ -68,7 +68,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 				items[i] = info
 			}
 
-			if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
+			if err := w.uploadTracksBatch(ctx, reply, items, caption); nil != err {
 				if errutil.IsContext(ctx) {
 					return ctx.Err()
 				}
@@ -79,7 +79,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, dir tidalfs.DownloadDir) error
 	return nil
 }
 
-func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) error {
+func (w *Worker) uploadPlaylist(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) error {
 	playlistFs := dir.Playlist(w.currentJob.ID)
 
 	info, err := playlistFs.InfoFile.Read()
@@ -119,7 +119,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 			items[i] = info
 		}
 
-		if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
+		if err := w.uploadTracksBatch(ctx, reply, items, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
@@ -129,7 +129,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, dir tidalfs.DownloadDir) er
 	return nil
 }
 
-func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
+func (w *Worker) uploadMix(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) error {
 	mixFs := dir.Mix(w.currentJob.ID)
 
 	info, err := mixFs.InfoFile.Read()
@@ -169,7 +169,7 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 			items[i] = info
 		}
 
-		if err := w.uploadTracksBatch(ctx, items, caption); nil != err {
+		if err := w.uploadTracksBatch(ctx, reply, items, caption); nil != err {
 			if errutil.IsContext(ctx) {
 				return ctx.Err()
 			}
@@ -179,7 +179,7 @@ func (w *Worker) uploadMix(ctx context.Context, dir tidalfs.DownloadDir) error {
 	return nil
 }
 
-func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
+func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
 	var (
 		album = make([]message.MultiMediaOption, len(batch))
 		flawP = make(flaw.P)
@@ -239,19 +239,18 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, batch []TrackUploadInfo,
 		rest = album[1:]
 	}
 
-	target := w.config.TargetPeerID
-	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Clear().Album(ctx, album[0], rest...); nil != err {
+	if _, err := reply.Clear().Album(ctx, album[0], rest...); nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
 
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return flaw.From(fmt.Errorf("failed to send media album to specified target %q: %v", target, err)).Append(flawP)
+		return flaw.From(fmt.Errorf("failed to send media album: %v", err)).Append(flawP)
 	}
 	return nil
 }
 
-func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err error) {
+func (w *Worker) uploadSingle(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) (err error) {
 	trackFs := dir.Single(w.currentJob.ID)
 
 	info, err := trackFs.InfoFile.Read()
@@ -302,14 +301,13 @@ func (w *Worker) uploadSingle(ctx context.Context, dir tidalfs.DownloadDir) (err
 		return must.BeFlaw(err).Append(flawP)
 	}
 
-	target := w.config.TargetPeerID
-	if _, err := w.sender.Resolve(target).Reply(w.currentJob.MessageID).Media(ctx, document); nil != err {
+	if _, err := reply.Media(ctx, document); nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
 
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
-		return flaw.From(fmt.Errorf("failed to send media to specified target %q: %v", target, err)).Append(flawP)
+		return flaw.From(fmt.Errorf("failed to send media: %v", err)).Append(flawP)
 	}
 	return nil
 }
