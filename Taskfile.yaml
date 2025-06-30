@@ -44,7 +44,6 @@ tasks:
     cmd: |-
       ./tools/golangci-lint \
         run {{ if .FIX }}--fix {{ end }}\
-        --verbose \
         --output.text.path stdout
 
   lint:local:
