@@ -150,6 +150,7 @@ func run(cliCtx *cli.Context) (err error) {
 	}
 
 	handler := func(ctx context.Context, u tg.UpdatesClass) error { return nil }
+	//nolint:exhaustruct
 	updatesConfig := updates.Config{
 		Handler: telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error { return handler(ctx, u) }),
 	}
@@ -359,9 +360,7 @@ func run(cliCtx *cli.Context) (err error) {
 func buildHandler(w *Worker) telegram.UpdateHandlerFunc {
 	return func(ctx context.Context, u tg.UpdatesClass) error {
 		updates, ok := u.(*tg.Updates)
-		if !ok {
-			return fmt.Errorf("expected *tg.Updates, got %T", u)
-		} else if u == nil {
+		if !ok || u == nil {
 			return nil
 		}
 
@@ -376,9 +375,15 @@ func buildHandler(w *Worker) telegram.UpdateHandlerFunc {
 		for _, update := range updates.Updates {
 			switch us := update.(type) {
 			case *tg.UpdateNewMessage:
-				w.process(ctx, entities, us)
+				if err := w.process(ctx, entities, us); nil != err {
+					w.logger.Error().Err(err).Msg("Failed to process new message update")
+				}
 			case *tg.UpdateNewChannelMessage:
-				w.process(ctx, entities, us)
+				if err := w.process(ctx, entities, us); nil != err {
+					w.logger.Error().Err(err).Msg("Failed to process new channel message update")
+				}
+			default:
+				w.logger.Info().Str("type", fmt.Sprintf("%T", us)).Msg("Unsupported update type received")
 			}
 		}
 		return nil
