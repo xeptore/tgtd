@@ -1346,7 +1346,7 @@ func (d *Downloader) Playlist(ctx context.Context, id string) error {
 				return err
 			}
 
-			trackLyrics, err := fetchTrackLyrics(ctx, accessToken, id)
+			trackLyrics, err := fetchTrackLyrics(ctx, accessToken, track.ID)
 			if nil != err {
 				return err
 			}
