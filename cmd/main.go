@@ -365,7 +365,7 @@ func buildOnMessage(w *Worker, msgCtx context.Context, cfg config.Config) func(c
 		if !ok || m.Out {
 			return nil
 		}
-		if u, ok := m.PeerID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
+		if u, ok := m.FromID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
 			return nil
 		}
 		msg := m.Message
