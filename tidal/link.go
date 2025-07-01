@@ -23,15 +23,14 @@ func IsLink(text string) bool {
 		return false
 	}
 
-	if pathParts := strings.SplitN(strings.Trim(u.Path, "/"), "/", 3); len(pathParts) < 2 {
-		return false
-	} else if len(pathParts) == 2 {
+	switch pathParts := strings.SplitN(strings.Trim(u.Path, "/"), "/", 3); len(pathParts) {
+	case 2:
 		switch pathParts[0] {
 		case "mix", "playlist", "album", "artist", "track", "video":
 		default:
 			return false
 		}
-	} else if len(pathParts) == 3 {
+	case 3:
 		switch pathParts[0] {
 		case "browse":
 		default:
@@ -43,8 +42,6 @@ func IsLink(text string) bool {
 		default:
 			return false
 		}
-	} else {
-		return false
 	}
 	return true
 }
