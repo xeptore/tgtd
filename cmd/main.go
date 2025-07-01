@@ -40,6 +40,7 @@ import (
 	"github.com/xeptore/tgtd/log"
 	"github.com/xeptore/tgtd/must"
 	"github.com/xeptore/tgtd/tgutil"
+	"github.com/xeptore/tgtd/tidal"
 	"github.com/xeptore/tgtd/tidal/auth"
 	tidaldl "github.com/xeptore/tgtd/tidal/download"
 	tidalfs "github.com/xeptore/tgtd/tidal/fs"
@@ -587,16 +588,118 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 		}
 	}
 
-	// Assuming it's the default type of command, i.e., download
-	link, err := parseLink(msg.Message)
-	if nil != err {
-		if errInvalidLink := new(InvalidLinkError); errors.As(err, &errInvalidLink) {
-			lines := []styling.StyledTextOption{
-				styling.Plain("Failed to parse link:"),
-				styling.Plain("\n"),
-				styling.Code(errInvalidLink.Error()),
+	if tidal.IsLink(msg.Message) {
+		// Assuming it's the default type of command, i.e., download
+		link, err := parseLink(msg.Message)
+		if nil != err {
+			if errInvalidLink := new(InvalidLinkError); errors.As(err, &errInvalidLink) {
+				lines := []styling.StyledTextOption{
+					styling.Plain("Failed to parse link:"),
+					styling.Plain("\n"),
+					styling.Code(errInvalidLink.Error()),
+				}
+				if _, err := reply.StyledText(ctx, lines...); nil != err {
+					if errors.Is(ctx.Err(), context.Canceled) {
+						return nil
+					}
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+					return nil
+				}
+				return nil
 			}
-			if _, err := reply.StyledText(ctx, lines...); nil != err {
+		}
+
+		if err := w.run(ctx, reply, *link); nil != err {
+			switch {
+			case errutil.IsContext(ctx):
+				// Parent context is canceled. Nothing that we need to do.
+				return nil
+			case errors.Is(err, context.Canceled):
+				// As we checked in the previous case that the parent context is not canceled,
+				// we can safely assume that the context was canceled by the user cancellation request.
+				w.logger.Info().Msg("Job canceled by the /cancel command")
+				if _, err := reply.StyledText(ctx, styling.Plain("Job canceled by the /cancel command")); nil != err {
+					if errors.Is(ctx.Err(), context.Canceled) {
+						return nil
+					}
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+					return nil
+				}
+				return nil
+			case errors.Is(err, context.DeadlineExceeded):
+				if _, err := reply.StyledText(ctx, styling.Plain("Job has timed out.")); nil != err {
+					if errors.Is(ctx.Err(), context.Canceled) {
+						return nil
+					}
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+					return nil
+				}
+				return nil
+			case errors.Is(err, tidaldl.ErrTooManyRequests):
+				if _, err := reply.StyledText(ctx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
+					if errors.Is(ctx.Err(), context.Canceled) {
+						return nil
+					}
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+					return nil
+				}
+				return nil
+			}
+			// handling the rest of possible error types that are not supported by switch/case syntactically.
+			if errAlreadyRunning := new(JobAlreadyRunningError); errors.As(err, &errAlreadyRunning) {
+				lines := []styling.StyledTextOption{
+					styling.Plain("Another job is still running."),
+					styling.Plain("\n"),
+					styling.Plain("Cancel with "),
+					styling.BotCommand("/cancel"),
+				}
+				if _, err := reply.StyledText(ctx, lines...); nil != err {
+					if errors.Is(ctx.Err(), context.Canceled) {
+						return nil
+					}
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
+					return nil
+				}
+				return nil
+			}
+
+			w.logger.Error().Func(log.Flaw(err)).Msg("Failed to run job")
+			flawBytes, err := errutil.FlawToYAML(must.BeFlaw(err))
+			if nil != err {
+				w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
+				return nil
+			}
+			up, cancel := w.newUploader(ctx)
+			defer func() {
+				if cancelErr := cancel(); nil != cancelErr {
+					flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
+					w.logger.Error().Func(log.Flaw(flaw.From(cancelErr).Append(flawP))).Msg("Failed to close uploader pool")
+				}
+			}()
+
+			upload, err := up.FromReader(ctx, "flaw.yaml", bytes.NewReader(flawBytes))
+			if nil != err {
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
+				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to YAML")
+				return nil
+			}
+			document := message.UploadedDocument(upload)
+			document.
+				MIME("application/yaml").
+				Attributes(
+					&tg.DocumentAttributeFilename{
+						FileName: filepath.Base(
+							fmt.Sprintf("flaw-%s.yaml", time.Now().Format("2006-01-02-15-04-05")),
+						),
+					},
+				).
+				ForceFile(true)
+			if _, err := reply.Media(ctx, document); nil != err {
 				if errors.Is(ctx.Err(), context.Canceled) {
 					return nil
 				}
@@ -606,109 +709,10 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 			}
 			return nil
 		}
+
+		w.logger.Info().Msg("Job succeeded")
 	}
 
-	if err := w.run(ctx, reply, *link); nil != err {
-		switch {
-		case errutil.IsContext(ctx):
-			// Parent context is canceled. Nothing that we need to do.
-			return nil
-		case errors.Is(err, context.Canceled):
-			// As we checked in the previous case that the parent context is not canceled,
-			// we can safely assume that the context was canceled by the user cancellation request.
-			w.logger.Info().Msg("Job canceled by the /cancel command")
-			if _, err := reply.StyledText(ctx, styling.Plain("Job canceled by the /cancel command")); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
-					return nil
-				}
-				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-				return nil
-			}
-			return nil
-		case errors.Is(err, context.DeadlineExceeded):
-			if _, err := reply.StyledText(ctx, styling.Plain("Job has timed out.")); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
-					return nil
-				}
-				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-				return nil
-			}
-			return nil
-		case errors.Is(err, tidaldl.ErrTooManyRequests):
-			if _, err := reply.StyledText(ctx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
-					return nil
-				}
-				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-				return nil
-			}
-			return nil
-		}
-		// handling the rest of possible error types that are not supported by switch/case syntactically.
-		if errAlreadyRunning := new(JobAlreadyRunningError); errors.As(err, &errAlreadyRunning) {
-			lines := []styling.StyledTextOption{
-				styling.Plain("Another job is still running."),
-				styling.Plain("\n"),
-				styling.Plain("Cancel with "),
-				styling.BotCommand("/cancel"),
-			}
-			if _, err := reply.StyledText(ctx, lines...); nil != err {
-				if errors.Is(ctx.Err(), context.Canceled) {
-					return nil
-				}
-				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-				return nil
-			}
-			return nil
-		}
-
-		w.logger.Error().Func(log.Flaw(err)).Msg("Failed to run job")
-		flawBytes, err := errutil.FlawToYAML(must.BeFlaw(err))
-		if nil != err {
-			w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
-			return nil
-		}
-		up, cancel := w.newUploader(ctx)
-		defer func() {
-			if cancelErr := cancel(); nil != cancelErr {
-				flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
-				w.logger.Error().Func(log.Flaw(flaw.From(cancelErr).Append(flawP))).Msg("Failed to close uploader pool")
-			}
-		}()
-
-		upload, err := up.FromReader(ctx, "flaw.yaml", bytes.NewReader(flawBytes))
-		if nil != err {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to YAML")
-			return nil
-		}
-		document := message.UploadedDocument(upload)
-		document.
-			MIME("application/yaml").
-			Attributes(
-				&tg.DocumentAttributeFilename{
-					FileName: filepath.Base(
-						fmt.Sprintf("flaw-%s.yaml", time.Now().Format("2006-01-02-15-04-05")),
-					),
-				},
-			).
-			ForceFile(true)
-		if _, err := reply.Media(ctx, document); nil != err {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return nil
-			}
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
-			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-			return nil
-		}
-		return nil
-	}
-
-	w.logger.Info().Msg("Job succeeded")
 	return nil
 }
 
@@ -1085,7 +1089,12 @@ func (w *Worker) run(ctx context.Context, reply *message.Builder, link DownloadL
 			return flaw.From(fmt.Errorf("failed to send message: %v", err))
 		}
 	default:
-		panic("unsupported link kind to download: " + link.Kind)
+		if _, err := reply.StyledText(ctx, html.Format(nil, "<em>Unsupported media kind: <b>%s</b>.</em>", link.Kind)); nil != err {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return ctx.Err()
+			}
+			return flaw.From(fmt.Errorf("failed to send message: %v", err))
+		}
 	}
 	return nil
 }
