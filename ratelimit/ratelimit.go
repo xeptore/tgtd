@@ -10,7 +10,7 @@ const (
 	PlaylistDownloadConcurrency       = 3
 	MixDownloadConcurrency            = 3
 	MultipartTrackDownloadConcurrency = 5
-	BatchUploadConcurrency            = 3
+	BatchUploadConcurrency            = 8
 )
 
 func TrackDownloadSleepMS() time.Duration {

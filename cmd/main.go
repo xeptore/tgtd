@@ -735,8 +735,8 @@ type Worker struct {
 }
 
 func newUploader(ctx context.Context, client *telegram.Client) (*uploader.Uploader, func() error) {
-	pool := dcpool.NewPool(client, 4, tgutil.DefaultMiddlewares(ctx)...)
-	return uploader.NewUploader(pool.Default(ctx)).WithPartSize(uploader.MaximumPartSize).WithThreads(4), pool.Close
+	pool := dcpool.NewPool(client, 8, tgutil.DefaultMiddlewares(ctx)...)
+	return uploader.NewUploader(pool.Default(ctx)).WithPartSize(uploader.MaximumPartSize).WithThreads(16), pool.Close
 }
 
 type Job struct {

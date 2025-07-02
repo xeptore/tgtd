@@ -223,7 +223,21 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, 
 		rest = album[1:]
 	}
 
-	if _, err := reply.Clear().Album(ctx, album[0], rest...); nil != err {
+	err = backoff.Retry(func() error {
+		if _, err := reply.Clear().Album(ctx, album[0], rest...); nil != err {
+			if timeout, ok := telegram.AsFloodWait(err); ok {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(timeout + 1*time.Second):
+					return err
+				}
+			}
+			return backoff.Permanent(err)
+		}
+		return nil
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), ctx))
+	if nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
@@ -335,7 +349,6 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 					return err
 				}
 			}
-
 			return backoff.Permanent(err)
 		}
 		trackFile = file
