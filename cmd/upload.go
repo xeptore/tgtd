@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
+	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/html"
 	"github.com/gotd/td/telegram/message/styling"
@@ -185,26 +187,8 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, 
 		flawP = make(flaw.P)
 	)
 
-	up, cancel := w.newUploader(ctx)
-	defer func() {
-		if cancelErr := cancel(); nil != cancelErr {
-			flawP["err_debug_tree"] = errutil.Tree(cancelErr).FlawP()
-			cancelErr = flaw.From(fmt.Errorf("failed to close uploader pool: %v", cancelErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = cancelErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context ended")).Join(cancelErr)
-			case errutil.IsFlaw(err):
-				err = must.BeFlaw(err).Join(cancelErr)
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-	}()
-
 	wg, wgCtx := errgroup.WithContext(ctx)
-	wg.SetLimit(ratelimit.AlbumUploadConcurrency)
+	wg.SetLimit(ratelimit.BatchUploadConcurrency)
 
 	loopFlawPs := make([]flaw.P, len(batch))
 	flawP["loop_payloads"] = loopFlawPs
@@ -215,7 +199,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, 
 				caption := append(caption, styling.Plain("\n"), html.String(nil, w.config.Signature))
 				builder.WithCaption(caption)
 			}
-			document, err := builder.uploadTrack(wgCtx, up, item)
+			document, err := builder.uploadTrack(wgCtx, w.uploader, item)
 			if nil != err {
 				if errutil.IsContext(wgCtx) {
 					return wgCtx.Err()
@@ -260,24 +244,6 @@ func (w *Worker) uploadSingle(ctx context.Context, reply *message.Builder, dir t
 
 	flawP := flaw.P{}
 
-	up, cancel := w.newUploader(ctx)
-	defer func() {
-		if cancelErr := cancel(); nil != cancelErr {
-			flawP["err_debug_tree"] = errutil.Tree(cancelErr).FlawP()
-			cancelErr = flaw.From(fmt.Errorf("failed to cancel uploader pool: %v", cancelErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = cancelErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context ended")).Join(cancelErr)
-			case errutil.IsFlaw(err):
-				err = must.BeFlaw(err).Join(cancelErr)
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-	}()
-
 	caption := []styling.StyledTextOption{
 		styling.Plain(info.Caption),
 		styling.Plain("\n"),
@@ -293,7 +259,7 @@ func (w *Worker) uploadSingle(ctx context.Context, reply *message.Builder, dir t
 		CoverID:    info.CoverID,
 		CoverPath:  trackFs.Cover.Path,
 	}
-	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, up, uploadInfo)
+	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, w.uploader, uploadInfo)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
@@ -357,21 +323,37 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 	}
 	cover := cachedCover.Value()
 
-	upload, err := uploader.FromPath(ctx, info.FilePath)
+	var trackFile tg.InputFileClass
+	err = backoff.Retry(func() error {
+		file, err := uploader.FromPath(ctx, info.FilePath)
+		if nil != err {
+			if timeout, ok := telegram.AsFloodWait(err); ok {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(timeout + 1*time.Second):
+					return err
+				}
+			}
+
+			return backoff.Permanent(err)
+		}
+		trackFile = file
+		return nil
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), ctx))
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return nil, ctx.Err()
 		}
-
 		flawP["err_debug_tree"] = errutil.Tree(err).FlawP()
 		return nil, flaw.From(fmt.Errorf("failed to upload track file: %v", err)).Append(flawP)
 	}
 
 	var document *message.UploadedDocumentBuilder
 	if nil != u.caption {
-		document = message.UploadedDocument(upload, u.caption...)
+		document = message.UploadedDocument(trackFile, u.caption...)
 	} else {
-		document = message.UploadedDocument(upload)
+		document = message.UploadedDocument(trackFile)
 	}
 
 	title := info.Title

@@ -170,6 +170,24 @@ func run(cliCtx *cli.Context) (err error) {
 	)
 	logger.Debug().Msg("Telegram client initialized.")
 
+	uploader, cancelUploader := newUploader(ctx, client)
+	defer func() {
+		if cancelErr := cancelUploader(); nil != cancelErr {
+			flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
+			cancelErr = flaw.From(fmt.Errorf("failed to close uploader pool: %v", cancelErr)).Append(flawP)
+			switch {
+			case nil == err:
+				err = cancelErr
+			case errutil.IsContext(ctx):
+				err = flaw.From(errors.New("context ended")).Join(cancelErr)
+			case errutil.IsFlaw(err):
+				err = must.BeFlaw(err).Join(cancelErr)
+			default:
+				panic(errutil.UnknownError(err))
+			}
+		}
+	}()
+
 	w := &Worker{
 		mutex:      sync.Mutex{},
 		config:     cfg,
@@ -179,6 +197,7 @@ func run(cliCtx *cli.Context) (err error) {
 		currentJob: nil,
 		cache:      cache.New(),
 		logger:     logger.With().Str("module", "worker").Logger(),
+		uploader:   uploader,
 	}
 
 	clientCtx, cancel := ctxutil.WithDelayedTimeout(ctx, 5*time.Second)
@@ -674,15 +693,8 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
 				return nil
 			}
-			up, cancel := w.newUploader(ctx)
-			defer func() {
-				if cancelErr := cancel(); nil != cancelErr {
-					flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
-					w.logger.Error().Func(log.Flaw(flaw.From(cancelErr).Append(flawP))).Msg("Failed to close uploader pool")
-				}
-			}()
 
-			upload, err := up.FromReader(ctx, "flaw.yaml", bytes.NewReader(flawBytes))
+			upload, err := w.uploader.FromReader(ctx, "flaw.yaml", bytes.NewReader(flawBytes))
 			if nil != err {
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to YAML")
@@ -725,11 +737,12 @@ type Worker struct {
 	currentJob *Job
 	cache      *cache.Cache
 	logger     zerolog.Logger
+	uploader   *uploader.Uploader
 }
 
-func (w *Worker) newUploader(ctx context.Context) (*uploader.Uploader, func() error) {
-	pool := dcpool.NewPool(w.client, 8, tgutil.DefaultMiddlewares(ctx)...)
-	return uploader.NewUploader(pool.Default(ctx)).WithPartSize(uploader.MaximumPartSize).WithThreads(4), pool.Close
+func newUploader(ctx context.Context, client *telegram.Client) (*uploader.Uploader, func() error) {
+	pool := dcpool.NewPool(client, 8, tgutil.DefaultMiddlewares(ctx)...)
+	return uploader.NewUploader(pool.Default(ctx)).WithPartSize(uploader.MaximumPartSize).WithThreads(8), pool.Close
 }
 
 type Job struct {
