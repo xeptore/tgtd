@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/goccy/go-json v0.10.5
-	github.com/gotd/td v0.125.0
+	github.com/gotd/td v0.126.0
 	github.com/iyear/tdl/core v0.19.0
 	github.com/joho/godotenv v1.5.1
 	github.com/karlseguin/ccache/v3 v3.0.6
