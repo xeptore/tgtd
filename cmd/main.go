@@ -395,13 +395,9 @@ func buildHandler(w *Worker) telegram.UpdateHandlerFunc {
 		for _, update := range updates.Updates {
 			switch us := update.(type) {
 			case *tg.UpdateNewMessage:
-				if err := w.process(ctx, entities, us); nil != err {
-					w.logger.Error().Err(err).Msg("Failed to process new message update")
-				}
+				w.process(ctx, entities, us)
 			case *tg.UpdateNewChannelMessage:
-				if err := w.process(ctx, entities, us); nil != err {
-					w.logger.Error().Err(err).Msg("Failed to process new channel message update")
-				}
+				w.process(ctx, entities, us)
 			default:
 				w.logger.Info().Str("type", fmt.Sprintf("%T", us)).Msg("Unsupported update type received")
 			}
@@ -410,30 +406,30 @@ func buildHandler(w *Worker) telegram.UpdateHandlerFunc {
 	}
 }
 
-func (w *Worker) process(ctx context.Context, e tg.Entities, m message.AnswerableMessageUpdate) error {
+func (w *Worker) process(ctx context.Context, e tg.Entities, m message.AnswerableMessageUpdate) {
 	msg, ok := m.GetMessage().(*tg.Message)
 	if !ok || msg.Out {
-		return nil
+		return
 	}
 	reply := w.sender.Reply(e, m)
 
 	switch peer := msg.PeerID.(type) {
 	case *tg.PeerChat:
 		if u, ok := msg.FromID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
-			return nil
+			return
 		}
 	case *tg.PeerChannel:
 		if u, ok := msg.FromID.(*tg.PeerUser); !ok || !slices.Contains(w.config.FromIDs, u.UserID) {
-			return nil
+			return
 		}
 	case *tg.PeerUser:
 		if !slices.Contains(w.config.FromIDs, peer.UserID) {
-			return nil
+			return
 		}
 	default:
 		if _, err := reply.Text(ctx, "Unsupported invocation."); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
-				return nil
+				return
 			}
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
@@ -443,12 +439,12 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 	if msg.Message == "/start" {
 		if _, err := reply.Text(ctx, "Hello!"); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
-				return nil
+				return
 			}
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
 		}
-		return nil
+		return
 	}
 
 	if msg.Message == "/authorize" {
@@ -459,13 +455,13 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				if _, err := reply.StyledText(ctx, styling.Plain("Authorizer initialization canceled")); nil != err {
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			case errors.Is(err, context.DeadlineExceeded):
 				lines := []styling.StyledTextOption{
 					styling.Plain("Issuing authorization request took too much time to respond."),
@@ -475,24 +471,24 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("TIDAL authorizer initialization timed out")
 				if _, err := reply.StyledText(ctx, lines...); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			case errutil.IsFlaw(err):
 				w.logger.Error().Func(log.Flaw(err)).Msg("Failed to initialize authorizer due to unknown reason")
 				if _, err := reply.StyledText(ctx, styling.Plain("Failed to initialize authorizer due to unknown reason")); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			default:
 				panic(errutil.UnknownError(err))
 			}
@@ -511,11 +507,11 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 		}
 		if _, err := reply.StyledText(ctx, lines...); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
-				return nil
+				return
 			}
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-			return nil
+			return
 		}
 
 		res := <-wait
@@ -525,23 +521,23 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				if _, err := reply.StyledText(ctx, styling.Plain("Operation canceled while was waiting for authorization.")); nil != err {
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						w.logger.Error().Func(log.Flaw(flaw.From(err))).Msg("Timeout while sending reply")
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			case errors.Is(err, auth.ErrAuthWaitTimeout):
 				if _, err := reply.StyledText(ctx, styling.Plain("Authorization URL expired. Try again with a delay.")); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			case errutil.IsFlaw(err):
 				w.logger.Error().Func(log.Flaw(err)).Msg("TIDAL authentication has failed")
 				lines := []styling.StyledTextOption{
@@ -551,13 +547,13 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				}
 				if _, err := reply.StyledText(ctx, lines...); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			default:
 				panic(errutil.UnknownError(err))
 			}
@@ -572,13 +568,13 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 		}
 		if _, err := reply.StyledText(ctx, lines...); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
-				return nil
+				return
 			}
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-			return nil
+			return
 		}
-		return nil
+		return
 	}
 
 	if msg.Message == "/cancel" {
@@ -588,22 +584,22 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 			}
 			if _, err := reply.StyledText(ctx, styling.Plain("No job was running.")); nil != err {
 				if errors.Is(ctx.Err(), context.Canceled) {
-					return nil
+					return
 				}
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-				return nil
+				return
 			}
-			return nil
+			return
 		}
 
 		if _, err := reply.StyledText(ctx, styling.Plain("Job was canceled.")); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
-				return nil
+				return
 			}
 			flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 			w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-			return nil
+			return
 		}
 	}
 
@@ -619,13 +615,13 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				}
 				if _, err := reply.StyledText(ctx, lines...); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			}
 		}
 
@@ -633,40 +629,40 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 			switch {
 			case errutil.IsContext(ctx):
 				// Parent context is canceled. Nothing that we need to do.
-				return nil
+				return
 			case errors.Is(err, context.Canceled):
 				// As we checked in the previous case that the parent context is not canceled,
 				// we can safely assume that the context was canceled by the user cancellation request.
 				w.logger.Info().Msg("Job canceled by the /cancel command")
 				if _, err := reply.StyledText(ctx, styling.Plain("Job canceled by the /cancel command")); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			case errors.Is(err, context.DeadlineExceeded):
 				if _, err := reply.StyledText(ctx, styling.Plain("Job has timed out.")); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			case errors.Is(err, tidaldl.ErrTooManyRequests):
 				if _, err := reply.StyledText(ctx, styling.Plain("Received too many requests error while downloading from TIDAL.")); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			}
 			// handling the rest of possible error types that are not supported by switch/case syntactically.
 			if errAlreadyRunning := new(JobAlreadyRunningError); errors.As(err, &errAlreadyRunning) {
@@ -678,27 +674,27 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				}
 				if _, err := reply.StyledText(ctx, lines...); nil != err {
 					if errors.Is(ctx.Err(), context.Canceled) {
-						return nil
+						return
 					}
 					flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 					w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-					return nil
+					return
 				}
-				return nil
+				return
 			}
 
 			w.logger.Error().Func(log.Flaw(err)).Msg("Failed to run job")
 			flawBytes, err := errutil.FlawToYAML(must.BeFlaw(err))
 			if nil != err {
 				w.logger.Error().Func(log.Flaw(err)).Msg("Failed to convert flaw to TOML")
-				return nil
+				return
 			}
 
 			upload, err := w.uploader.FromReader(ctx, "flaw.yaml", bytes.NewReader(flawBytes))
 			if nil != err {
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to upload flaw to YAML")
-				return nil
+				return
 			}
 			document := message.UploadedDocument(upload)
 			document.
@@ -713,19 +709,17 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 				ForceFile(true)
 			if _, err := reply.Media(ctx, document); nil != err {
 				if errors.Is(ctx.Err(), context.Canceled) {
-					return nil
+					return
 				}
 				flawP := flaw.P{"err_debug_tree": errutil.Tree(err).FlawP()}
 				w.logger.Error().Func(log.Flaw(flaw.From(err).Append(flawP))).Msg("Failed to send reply")
-				return nil
+				return
 			}
-			return nil
+			return
 		}
 
 		w.logger.Info().Msg("Job succeeded")
 	}
-
-	return nil
 }
 
 type Worker struct {
