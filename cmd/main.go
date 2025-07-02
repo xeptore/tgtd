@@ -170,24 +170,6 @@ func run(cliCtx *cli.Context) (err error) {
 	)
 	logger.Debug().Msg("Telegram client initialized.")
 
-	uploader, cancelUploader := newUploader(ctx, client)
-	defer func() {
-		if cancelErr := cancelUploader(); nil != cancelErr {
-			flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
-			cancelErr = flaw.From(fmt.Errorf("failed to close uploader pool: %v", cancelErr)).Append(flawP)
-			switch {
-			case nil == err:
-				err = cancelErr
-			case errutil.IsContext(ctx):
-				err = flaw.From(errors.New("context ended")).Join(cancelErr)
-			case errutil.IsFlaw(err):
-				err = must.BeFlaw(err).Join(cancelErr)
-			default:
-				panic(errutil.UnknownError(err))
-			}
-		}
-	}()
-
 	w := &Worker{
 		mutex:      sync.Mutex{},
 		config:     cfg,
@@ -197,7 +179,7 @@ func run(cliCtx *cli.Context) (err error) {
 		currentJob: nil,
 		cache:      cache.New(),
 		logger:     logger.With().Str("module", "worker").Logger(),
-		uploader:   uploader,
+		uploader:   nil,
 	}
 
 	clientCtx, cancel := ctxutil.WithDelayedTimeout(ctx, 5*time.Second)
@@ -230,8 +212,26 @@ func run(cliCtx *cli.Context) (err error) {
 		api := tg.NewClient(client)
 		w.sender = message.NewSender(api)
 
-		fatherChat := w.sender.Resolve(cfg.TargetPeerID)
+		uploader, cancelUploader := newUploader(ctx, client)
+		defer func() {
+			if cancelErr := cancelUploader(); nil != cancelErr {
+				flawP := flaw.P{"err_debug_tree": errutil.Tree(cancelErr).FlawP()}
+				cancelErr = flaw.From(fmt.Errorf("failed to close uploader pool: %v", cancelErr)).Append(flawP)
+				switch {
+				case nil == err:
+					err = cancelErr
+				case errutil.IsContext(ctx):
+					err = flaw.From(errors.New("context ended")).Join(cancelErr)
+				case errutil.IsFlaw(err):
+					err = must.BeFlaw(err).Join(cancelErr)
+				default:
+					panic(errutil.UnknownError(err))
+				}
+			}
+		}()
+		w.uploader = uploader
 
+		fatherChat := w.sender.Resolve(cfg.TargetPeerID)
 		if _, err = fatherChat.StyledText(clientCtx, styling.Italic("Bot has started!")); nil != err {
 			switch {
 			case errutil.IsContext(clientCtx):
