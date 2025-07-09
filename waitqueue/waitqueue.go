@@ -68,7 +68,6 @@ func (w *WaitQueue) SendMany(ctx context.Context, n int32, fn func() error) erro
 				}
 				return err
 			}
-			return nil
 		}
 	}
 }
@@ -84,7 +83,6 @@ func (w *WaitQueue) trySend(fn func() error, n int32) error {
 			return err
 		}
 		w.intervalCounter.Add(n)
-		return nil
 	}
 	return errIntervalCapReached
 }
