@@ -55,7 +55,7 @@ func (w *WaitQueue) SendSingle(ctx context.Context, fn func() error) error {
 
 func (w *WaitQueue) SendMany(ctx context.Context, n int32, fn func() error) error {
 	<-w.timer.C
-	defer w.timer.Reset(4 * time.Second)
+	defer w.timer.Reset(1331 * time.Millisecond)
 
 	for {
 		select {
