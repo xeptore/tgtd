@@ -17,7 +17,7 @@ require (
 	github.com/urfave/cli/v2 v2.27.7
 	github.com/xeptore/flaw/v8 v8.3.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
-	golang.org/x/sync v0.15.0
+	golang.org/x/sync v0.16.0
 	gopkg.in/matryer/try.v1 v1.0.0-20150601225556-312d2599e12e
 	gopkg.in/yaml.v3 v3.0.1
 )
