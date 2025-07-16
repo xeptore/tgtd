@@ -13,6 +13,7 @@ import (
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
+	"github.com/rs/zerolog"
 	"github.com/xeptore/flaw/v8"
 	"golang.org/x/sync/errgroup"
 
@@ -26,7 +27,7 @@ import (
 	tidalfs "github.com/xeptore/tgtd/tidal/fs"
 )
 
-func (w *Worker) uploadAlbum(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) error {
+func (w *Worker) uploadAlbum(ctx context.Context, reply *message.RequestBuilder, dir tidalfs.DownloadDir) error {
 	albumFs := dir.Album(w.currentJob.ID)
 
 	info, err := albumFs.InfoFile.Read()
@@ -81,7 +82,7 @@ func (w *Worker) uploadAlbum(ctx context.Context, reply *message.Builder, dir ti
 	return nil
 }
 
-func (w *Worker) uploadPlaylist(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) error {
+func (w *Worker) uploadPlaylist(ctx context.Context, reply *message.RequestBuilder, dir tidalfs.DownloadDir) error {
 	playlistFs := dir.Playlist(w.currentJob.ID)
 
 	info, err := playlistFs.InfoFile.Read()
@@ -131,7 +132,7 @@ func (w *Worker) uploadPlaylist(ctx context.Context, reply *message.Builder, dir
 	return nil
 }
 
-func (w *Worker) uploadMix(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) error {
+func (w *Worker) uploadMix(ctx context.Context, reply *message.RequestBuilder, dir tidalfs.DownloadDir) error {
 	mixFs := dir.Mix(w.currentJob.ID)
 
 	info, err := mixFs.InfoFile.Read()
@@ -181,7 +182,7 @@ func (w *Worker) uploadMix(ctx context.Context, reply *message.Builder, dir tida
 	return nil
 }
 
-func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
+func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.RequestBuilder, batch []TrackUploadInfo, caption []styling.StyledTextOption) (err error) {
 	var (
 		album = make([]message.MultiMediaOption, len(batch))
 		flawP = make(flaw.P)
@@ -199,7 +200,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, 
 				caption := append(caption, styling.Plain("\n"), html.String(nil, w.config.Signature))
 				builder.WithCaption(caption)
 			}
-			document, err := builder.uploadTrack(wgCtx, w.uploader, item)
+			document, err := builder.uploadTrack(wgCtx, w.logger, w.uploader, item)
 			if nil != err {
 				if errutil.IsContext(wgCtx) {
 					return wgCtx.Err()
@@ -226,6 +227,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, 
 	err = backoff.Retry(func() error {
 		if _, err := reply.Clear().Album(ctx, album[0], rest...); nil != err {
 			if timeout, ok := telegram.AsFloodWait(err); ok {
+				w.logger.Error().Err(err).Dur("duration", timeout).Msg("Hit FLOOD_WAIT error")
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
@@ -248,7 +250,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.Builder, 
 	return nil
 }
 
-func (w *Worker) uploadSingle(ctx context.Context, reply *message.Builder, dir tidalfs.DownloadDir) (err error) {
+func (w *Worker) uploadSingle(ctx context.Context, reply *message.RequestBuilder, dir tidalfs.DownloadDir) (err error) {
 	trackFs := dir.Single(w.currentJob.ID)
 
 	info, err := trackFs.InfoFile.Read()
@@ -273,7 +275,7 @@ func (w *Worker) uploadSingle(ctx context.Context, reply *message.Builder, dir t
 		CoverID:    info.CoverID,
 		CoverPath:  trackFs.Cover.Path,
 	}
-	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, w.uploader, uploadInfo)
+	document, err := newTrackUploadBuilder(&w.cache.UploadedCovers).WithCaption(caption).uploadTrack(ctx, w.logger, w.uploader, uploadInfo)
 	if nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
@@ -317,7 +319,7 @@ type TrackUploadInfo struct {
 	CoverPath  string
 }
 
-func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader.Uploader, info TrackUploadInfo) (*message.UploadedDocumentBuilder, error) {
+func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, logger zerolog.Logger, uploader *uploader.Uploader, info TrackUploadInfo) (*message.UploadedDocumentBuilder, error) {
 	flawP := flaw.P{}
 
 	cachedCover, err := u.cache.Fetch(info.CoverID, cache.DefaultUploadedCoverTTL, func() (tg.InputFileClass, error) {
@@ -342,6 +344,7 @@ func (u *TrackUploadBuilder) uploadTrack(ctx context.Context, uploader *uploader
 		file, err := uploader.FromPath(ctx, info.FilePath)
 		if nil != err {
 			if timeout, ok := telegram.AsFloodWait(err); ok {
+				logger.Error().Err(err).Dur("duration", timeout).Msg("Hit FLOOD_WAIT error")
 				select {
 				case <-ctx.Done():
 					return ctx.Err()

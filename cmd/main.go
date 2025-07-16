@@ -411,7 +411,7 @@ func (w *Worker) process(ctx context.Context, e tg.Entities, m message.Answerabl
 	if !ok || msg.Out {
 		return
 	}
-	reply := w.sender.Reply(e, m)
+	reply := w.sender.Answer(e, m)
 
 	switch peer := msg.PeerID.(type) {
 	case *tg.PeerChat:
@@ -814,7 +814,7 @@ func (w *Worker) cancelCurrentJob() error {
 	return os.ErrProcessDone
 }
 
-func (w *Worker) run(ctx context.Context, reply *message.Builder, link DownloadLink) error {
+func (w *Worker) run(ctx context.Context, reply *message.RequestBuilder, link DownloadLink) error {
 	if !w.mutex.TryLock() {
 		return &JobAlreadyRunningError{ID: w.currentJob.ID}
 	}
