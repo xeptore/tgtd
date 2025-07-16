@@ -225,8 +225,7 @@ func (w *Worker) uploadTracksBatch(ctx context.Context, reply *message.RequestBu
 	}
 
 	err = backoff.Retry(func() error {
-		n := int32(len(album)) //nolint:gosec
-		if err := w.queue.SendMany(ctx, n, func() error { _, err := reply.Clear().Album(ctx, album[0], rest...); return err }); nil != err {
+		if _, err := reply.Clear().Album(ctx, album[0], rest...); nil != err {
 			if timeout, ok := telegram.AsFloodWait(err); ok {
 				w.logger.Error().Err(err).Dur("duration", timeout).Msg("Hit FLOOD_WAIT error")
 				select {
@@ -284,7 +283,7 @@ func (w *Worker) uploadSingle(ctx context.Context, reply *message.RequestBuilder
 		return must.BeFlaw(err).Append(flawP)
 	}
 
-	if err := w.queue.SendSingle(ctx, func() error { _, err := reply.Media(ctx, document); return err }); nil != err {
+	if _, err := reply.Media(ctx, document); nil != err {
 		if errutil.IsContext(ctx) {
 			return ctx.Err()
 		}
