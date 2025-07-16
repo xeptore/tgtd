@@ -44,6 +44,7 @@ import (
 	"github.com/xeptore/tgtd/tidal/auth"
 	tidaldl "github.com/xeptore/tgtd/tidal/download"
 	tidalfs "github.com/xeptore/tgtd/tidal/fs"
+	"github.com/xeptore/tgtd/waitqueue"
 )
 
 const (
@@ -170,6 +171,9 @@ func run(cliCtx *cli.Context) (err error) {
 	)
 	logger.Debug().Msg("Telegram client initialized.")
 
+	queue := waitqueue.New(ctx)
+	defer queue.Close()
+
 	w := &Worker{
 		mutex:      sync.Mutex{},
 		config:     cfg,
@@ -180,6 +184,7 @@ func run(cliCtx *cli.Context) (err error) {
 		cache:      cache.New(),
 		logger:     logger.With().Str("module", "worker").Logger(),
 		uploader:   nil,
+		queue:      queue,
 	}
 
 	clientCtx, cancel := ctxutil.WithDelayedTimeout(ctx, 5*time.Second)
@@ -732,6 +737,7 @@ type Worker struct {
 	cache      *cache.Cache
 	logger     zerolog.Logger
 	uploader   *uploader.Uploader
+	queue      *waitqueue.WaitQueue
 }
 
 func newUploader(ctx context.Context, client *telegram.Client) (*uploader.Uploader, func() error) {
@@ -914,7 +920,11 @@ func (w *Worker) run(ctx context.Context, reply *message.RequestBuilder, link Do
 		}
 	case "album":
 		w.logger.Info().Str("id", link.ID).Msg("Starting download album")
-		if _, err := reply.StyledText(ctx, html.Format(nil, "<b><em>Downloading album...</em></b>")); nil != err {
+		fn := func() error {
+			_, err := reply.StyledText(ctx, html.Format(nil, "<b><em>Downloading album...</em></b>"))
+			return err
+		}
+		if err := w.queue.SendSingle(ctx, fn); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return ctx.Err()
 			}
@@ -952,7 +962,11 @@ func (w *Worker) run(ctx context.Context, reply *message.RequestBuilder, link Do
 		}
 
 		w.logger.Info().Str("id", link.ID).Msg("Download finished. Starting album upload")
-		if _, err := reply.StyledText(ctx, html.Format(nil, "<b><em>Download finished. Starting album upload...</em></b>")); nil != err {
+		fn = func() error {
+			_, err := reply.StyledText(ctx, html.Format(nil, "<b><em>Download finished. Starting album upload...</em></b>"))
+			return err
+		}
+		if err := w.queue.SendSingle(ctx, fn); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return ctx.Err()
 			}
@@ -967,7 +981,11 @@ func (w *Worker) run(ctx context.Context, reply *message.RequestBuilder, link Do
 		}
 
 		w.logger.Info().Str("id", link.ID).Msg("Album upload finished")
-		if _, err := reply.StyledText(ctx, html.Format(nil, "<b><em>Album uploaded successfully.</em></b>")); nil != err {
+		fn = func() error {
+			_, err := reply.StyledText(ctx, html.Format(nil, "<b><em>Album uploaded successfully.</em></b>"))
+			return err
+		}
+		if err := w.queue.SendSingle(ctx, fn); nil != err {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return ctx.Err()
 			}
