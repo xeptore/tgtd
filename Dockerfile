@@ -13,7 +13,7 @@ WORKDIR /home/dev/src
 COPY --chown=dev:dev . .
 RUN task build
 
-FROM docker.io/jrottenberg/ffmpeg:7.1-alpine
+FROM docker.io/jrottenberg/ffmpeg:8.0-alpine
 RUN adduser -D -u 1000 nonroot
 USER nonroot
 COPY --chown=nonroot:nonroot --from=build /home/dev/src/bin/tgtd /home/nonroot/tgtd
